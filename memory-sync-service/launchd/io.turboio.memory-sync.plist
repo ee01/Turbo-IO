@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>io.turboio.memory-sync</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/ABSOLUTE/PATH/TO/memory-sync-service/.venv/bin/memory-sync</string>
+		<string>serve</string>
+		<string>--root</string>
+		<string>/Users/YOU/Memory/io-glasses</string>
+		<string>--host</string>
+		<string>127.0.0.1</string>
+		<string>--port</string>
+		<string>8765</string>
+	</array>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/Users/YOU/Library/Logs/io.turboio.memory-sync.log</string>
+	<key>StandardErrorPath</key>
+	<string>/Users/YOU/Library/Logs/io.turboio.memory-sync.err</string>
+</dict>
+</plist>

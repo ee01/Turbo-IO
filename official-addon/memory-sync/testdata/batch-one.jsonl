@@ -1,0 +1,2 @@
+{"batchId":"batch-demo","eventCount":1,"schemaVersion":1,"sourceId":"glasses-demo","type":"batch"}
+{"eventId":"sess-demo:round-1|0","receivedAt":"2026-10-09T12:00:00+08:00","revision":1,"role":"0","schemaVersion":1,"sessionId":"sess-demo","sourceId":"glasses-demo","text":"合成测试句子","textHash":"b7c50db984f557d47f213fa77936dc0705eb6cdd194102c158244b64056a56e3","updatedAt":"2026-10-09T12:00:00+08:00"}

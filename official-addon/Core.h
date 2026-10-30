@@ -41,6 +41,7 @@ FOUNDATION_EXPORT BOOL TIOIsVoiceExitCommand(NSString *text);
 @interface TIOTranscriptArchive : NSObject
 - (instancetype)initWithDirectory:(NSURL *)directory;
 - (BOOL)recordText:(NSString *)text round:(NSString *)round role:(NSString *)role at:(NSDate *)date error:(NSError **)error;
+- (nullable NSArray<NSDictionary *> *)snapshot:(NSError **)error;
 - (nullable NSArray<NSURL *> *)exportAt:(NSDate *)date error:(NSError **)error;
 @end
 NS_ASSUME_NONNULL_END

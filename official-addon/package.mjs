@@ -9,6 +9,10 @@ import {amapResources,copyAMapResources} from './amap-resources.mjs';
 import {validateTranslationPair,prepareTranslationResources,copyTranslationResources} from './local-translation/package-resources.mjs';
 import {patch as patchExperimentalOTA} from '../firmware-research/strix-1.0.4.12/src/patch-ios105-ota-source.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url));
+export const MEMORY_SYNC_SESSION_ID='io.turboio.memory.sync.upload';
+export function memorySyncPackagingNotes() {
+  return {sessionIdentifier:MEMORY_SYNC_SESSION_ID,backgroundModesAdded:false,entitlementsAdded:false};
+}
 export function validateOptions(o) {
   for(const k of ['app','addon','profile','out'])if(typeof o[k]!=='string'||!path.isAbsolute(o[k]))throw Error('absolute_paths_required');
   if(!o.app.endsWith('.app')||o.out.endsWith('.app'))throw Error('use_app_input_and_new_output_directory');
@@ -116,7 +120,7 @@ print(json.dumps({'entitlements':p['Entitlements'],'expires':p['ExpirationDate']
   run('/usr/bin/ditto',['-c','-k','--norsrc','--noextattr','--keepParent',path.join(destination,'Payload'),ipa]);fs.chmodSync(ipa,0o600);
   run('/usr/bin/unzip',['-tq',ipa]);
   const names=run('/usr/bin/unzip',['-Z1',ipa],{encoding:'utf8'}).split('\n');if(names.some(n=>n.split('/').some(x=>x==='__MACOSX'||x.startsWith('._'))))throw Error('unexpected_archive_metadata');
-  const report={status:'SIGNED_NOT_DEVICE_ACCEPTED',signatureVerified:true,officialSourceUploaded:false,privateBootstrapIncluded:false,experimentalOTA:!!otaPatch,flashAuthorized:false,ipaSHA256:createHash('sha256').update(fs.readFileSync(ipa)).digest('hex'),pushEntitled:!!entitlement['aps-environment'],appleSignInEntitled:!!entitlement['com.apple.developer.applesignin']};
+  const report={status:'SIGNED_NOT_DEVICE_ACCEPTED',signatureVerified:true,officialSourceUploaded:false,privateBootstrapIncluded:false,experimentalOTA:!!otaPatch,flashAuthorized:false,ipaSHA256:createHash('sha256').update(fs.readFileSync(ipa)).digest('hex'),pushEntitled:!!entitlement['aps-environment'],appleSignInEntitled:!!entitlement['com.apple.developer.applesignin'],memorySync:memorySyncPackagingNotes()};
   fs.writeFileSync(path.join(destination,'report.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx',mode:0o600});console.log(JSON.stringify(report,null,2));
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){try{main();}catch(e){const known=/^[a-z_]+$/.test(e.message);console.error(known?e.message:'Local packaging failed. Check compatible source, profile and signing identity. No subprocess output or credentials are printed.');process.exitCode=1;}}

@@ -1,8 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {validateOptions,entitlementsFor,validateResearchPair} from './package.mjs';
+import {validateOptions,entitlementsFor,validateResearchPair,memorySyncPackagingNotes,MEMORY_SYNC_SESSION_ID} from './package.mjs';
 const o={app:'/example/Runner.app',addon:'/example/addon.dylib',profile:'/example/profile.mobileprovision',out:'/example/new-output',identity:'A'.repeat(40),device:'synthetic-device',bundle:'com.example.test'};
+test('memory sync packaging adds no background mode or entitlement',()=>{
+  const notes=memorySyncPackagingNotes();
+  assert.equal(MEMORY_SYNC_SESSION_ID,'io.turboio.memory.sync.upload');
+  assert.deepEqual(notes,{sessionIdentifier:MEMORY_SYNC_SESSION_ID,backgroundModesAdded:false,entitlementsAdded:false});
+  const source=fs.readFileSync(new URL('./memory-sync/MemorySyncProtocol.m',import.meta.url),'utf8');
+  assert.match(source,new RegExp(MEMORY_SYNC_SESSION_ID.replaceAll('.','\\.')));
+});
 test('experimental firmware packaging is explicit and original bundle only',()=>{
   assert.throws(()=>validateOptions({...o,'experimental-ota':'R3'}));
   assert.throws(()=>validateOptions({...o,bundle:'com.rayneo.venus.pub','experimental-ota':'unknown'}));

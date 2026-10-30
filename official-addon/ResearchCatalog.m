@@ -17,7 +17,7 @@ NSArray<NSDictionary *> *TIOResearchSections(NSString *page){
 #endif
         @{@"title":@"地图与眼镜导航",@"rows":@[Row(@"navigation",@"步行 / 骑行 / 驾车导航",@"map",-3,0)]},
         @{@"title":@"录音与整理",@"rows":@[Row(@"recordings",@"录音与文件分享",@"waveform",-1,0),Row(@"summary",@"转写文字整理",@"text.badge.star",-1,1)]},
-        @{@"title":@"全天智记",@"rows":@[Row(@"lifelogText",@"已保存文字",@"doc.text",-1,2),Row(@"lifelogAudio",@"音频保存与分享",@"waveform.circle",-1,3),Row(@"capture",@"保存之后的最终文字",@"square.and.arrow.down",1,0),Row(@"archive",@"导出文字归档",@"square.and.arrow.up",1,1)]}];
+        @{@"title":@"全天智记",@"rows":@[Row(@"lifelogText",@"已保存文字",@"doc.text",-1,2),Row(@"lifelogAudio",@"音频保存与分享",@"waveform.circle",-1,3),Row(@"capture",@"保存之后的最终文字",@"square.and.arrow.down",1,0),Row(@"archive",@"导出文字归档",@"square.and.arrow.up",1,1),Row(@"memoryUpload",@"同意上传到 Mac",@"icloud.and.arrow.up",-5,0),Row(@"memoryPause",@"暂停上传",@"pause.circle",-5,1),Row(@"memoryPair",@"配对这台 Mac",@"link",-5,2),Row(@"memorySyncNow",@"立即同步",@"arrow.clockwise",-5,3),Row(@"memoryHistory",@"上传已有副本",@"clock.arrow.circlepath",-5,4),Row(@"memoryQueue",@"同步队列",@"list.bullet",-5,5)]}];
     if([page isEqual:@"diagnostics"])return @[
 #if TIO_OTA_RESEARCH_ENABLED
 #if TIO_MUSIC

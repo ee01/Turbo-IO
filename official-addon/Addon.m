@@ -35,6 +35,8 @@
 #import "HomeTabBridge.h"
 #import "KnowledgeUI.h"
 #import "KnowledgeClient.h"
+#import "memory-sync/MemorySyncRuntime.h"
+#import "memory-sync/MemorySyncProtocol.h"
 
 #ifndef TIO_TARGET_BUNDLE_ID
 #define TIO_TARGET_BUNDLE_ID "com.rayneo.venus.pub"
@@ -45,9 +47,12 @@ static NSString *const TargetBundle=@TIO_TARGET_BUNDLE_ID;
 static NSString *const Domain=@"io.turboio.official-private-addon";
 static NSUserDefaults *Prefs;
 static TIOTranscriptArchive *Archive;
+static TIOMemorySyncRuntime *MemorySync;
 static dispatch_queue_t ArchiveQueue;
 static NSString *Diagnostic=@"尚未收到回调";
 static BOOL HooksReady=NO;
+static IMP OriginalBackground;
+static IMP OriginalOpenURL;
 static UIButton *Entry;
 static void (*OriginalAsr)(id,SEL,id,BOOL,id);
 static void (*OriginalNlp)(id,SEL,id);
@@ -269,11 +274,15 @@ static void CompleteHook(id self,SEL cmd) {
 }
 static void AlwaysOnHook(id self,SEL cmd,id value) {
     OriginalAlwaysOn(self,cmd,value);
-    if(![Prefs boolForKey:@"captureFinalText"]||![Get(value,@"finish") boolValue])return;
+    if(![Get(value,@"finish") boolValue]||!MemorySync)return;
     NSString *text=String(Get(value,@"text")),*round=String(Get(value,@"roundId"));
     id r=Get(value,@"role");NSString *role=[r respondsToSelector:@selector(stringValue)]?[r stringValue]:String(r);
-    NSString *identity=round.length?[NSString stringWithFormat:@"%@:%@",Controller.captureEpoch,round]:@"";
-    dispatch_async(ArchiveQueue,^{NSError *error=nil;BOOL ok=[Archive recordText:text round:identity role:role at:NSDate.date error:&error];dispatch_async(dispatch_get_main_queue(),^{Diagnostic=ok?@"全天智记最终文字已保存到扩展本机归档":@"全天智记归档失败，官方数据未改";});});
+    if(!role.length)role=@"0";
+    [MemorySync acceptFinalText:text round:round role:role receivedAt:NSDate.date];
+    dispatch_async(dispatch_get_main_queue(),^{
+        NSString *phase=MemorySync.status[@"phase"]?:@"";
+        Diagnostic=[phase isEqual:@"ready"]||[phase isEqual:@"local_only"]||[phase isEqual:@"upload_paused"]?@"全天智记最终文字已进入本机归档":@"归档没有写入：保存关闭、兼容性暂停或迁移失败";
+    });
 }
 
 @interface TIOPanel : UITableViewController
@@ -296,7 +305,7 @@ static void AlwaysOnHook(id self,SEL cmd,id value) {
     if(section==0)return [@{@"model":@"TURBO IO · 选择回答方式，管理自己的模型与搜索服务。",@"library":@"音频、转写集中管理；分享只创建副本，不删除原件。",@"diagnostics":@"手动测试与协议状态，不与日常操作混放。"} objectForKey:self.page];
     if(section!=self.sections.count-1)return nil;
     if([self.page isEqual:@"model"])return @"官方 ASR 保留，语音仍可能经过官方云。回答默认由 iOS 本机朗读；可选择自行配置阿里 Flash 云端朗读。仅在眼镜蓝牙音频输出已连接时播放。历史仅保留本次进程最近50条成功消息。";
-    if([self.page isEqual:@"library"])return @"保存需明确开启，不会启动录音或自动上传。智记只包含开启后保存的内容，不是官方历史全量导出。";
+    if([self.page isEqual:@"library"])return @"保存和上传是两次同意。开启保存不会启动录音，也不会自动上传。上传只发送同意之后的新文字，除非另外选择已有副本。";
     return @"测试需要手动触发，可能调用已配置的服务。接口成功不等于眼镜显示成功。关闭研究只关闭界面，不改变正在运行的功能。";
 }
 - (UITableViewCell *)tableView:(UITableView *)tableView cellForRowAtIndexPath:(NSIndexPath *)ip {
@@ -321,6 +330,12 @@ static void AlwaysOnHook(id self,SEL cmd,id value) {
     if([r[@"key"] isEqual:@"navigation"])c.detailTextLabel.text=@"高德搜索 / 地图选点 / 步行模拟 → 眼镜常亮文字；需自备iOS Key";
     if([r[@"key"] isEqual:@"archive"])c.detailTextLabel.text=@"一次导出 Markdown 与 JSON";
     if([r[@"key"] isEqual:@"capture"])c.detailTextLabel.text=@"只保存之后的智记文字，不启动麦克风";
+    if([r[@"key"] isEqual:@"memoryUpload"]){c.detailTextLabel.text=@"只上传同意之后的新文字";UISwitch *s=[UISwitch new];s.on=[MemorySync.status[@"uploadConsented"] boolValue];[s addTarget:self action:@selector(memoryUpload:) forControlEvents:UIControlEventValueChanged];c.accessoryView=s;}
+    if([r[@"key"] isEqual:@"memoryPause"]){c.detailTextLabel.text=@"暂停后不再新建传输，已授权队列还在";UISwitch *s=[UISwitch new];s.on=[MemorySync.status[@"uploadPaused"] boolValue];[s addTarget:self action:@selector(memoryPause:) forControlEvents:UIControlEventValueChanged];c.accessoryView=s;}
+    if([r[@"key"] isEqual:@"memoryPair"])c.detailTextLabel.text=[MemorySync.status[@"paired"] boolValue]?MemorySync.status[@"origin"]:@"尚未配对，不会上传";
+    if([r[@"key"] isEqual:@"memorySyncNow"])c.detailTextLabel.text=@"只同步已经同意的队列";
+    if([r[@"key"] isEqual:@"memoryHistory"])c.detailTextLabel.text=@"另外确认后，才上传开启上传之前的副本";
+    if([r[@"key"] isEqual:@"memoryQueue"]){NSDictionary *status=MemorySync.status?:@{};NSString *last=[status[@"lastError"] length]?status[@"lastError"]:@"无错误";c.detailTextLabel.text=[NSString stringWithFormat:@"%@ · 待传 %@ · 其他电脑 %@ · %@",status[@"phase"]?:@"off",status[@"pendingCount"]?:@0,status[@"heldForOtherTarget"]?:@0,last];c.accessoryType=UITableViewCellAccessoryNone;}
     if([r[@"key"] isEqual:@"status"])c.accessoryType=UITableViewCellAccessoryNone;
     return c;
 }
@@ -339,7 +354,7 @@ static void AlwaysOnHook(id self,SEL cmd,id value) {
         if(ip.row==7){c.detailTextLabel.text=@"模型按需调用 · 只读公开网页 · 最多两次";UISwitch *s=[UISwitch new];s.on=[Prefs boolForKey:@"tinyfishEnabled"];[s addTarget:self action:@selector(searchToggle:) forControlEvents:UIControlEventValueChanged];c.accessoryView=s;}
         if(ip.row==8)c.detailTextLabel.text=ReadKey(@"https://api.search.tinyfish.ai").length?@"已存手机 Keychain，不回显":@"未配置；不会使用 Mac 凭据";
         if(ip.row==9)c.detailTextLabel.text=@"不携带聊天历史 · 显示实际搜索次数";
-    }else if(ip.section==1){c.textLabel.text=ip.row==0?@"旁路保存最终文字":@"导出 Markdown / JSON";if(ip.row==0){UISwitch *s=[UISwitch new];s.on=[Prefs boolForKey:@"captureFinalText"];[s addTarget:self action:@selector(capture:) forControlEvents:UIControlEventValueChanged];c.accessoryView=s;}}
+    }else if(ip.section==1){c.textLabel.text=ip.row==0?@"旁路保存最终文字":@"导出 Markdown / JSON";if(ip.row==0){UISwitch *s=[UISwitch new];s.on=MemorySync.store.captureEnabled;[s addTarget:self action:@selector(capture:) forControlEvents:UIControlEventValueChanged];c.accessoryView=s;}}
     else{c.textLabel.text=HooksReady?@"回调签名检查通过":@"未启用：版本或回调不匹配";c.detailTextLabel.text=[Diagnostic stringByAppendingFormat:@"\n官方完成回调：%lu；语音退出入口：%@",(unsigned long)CompletionEvents,VoiceExitReady?@"已校验":@"不可用"];}
     return c;
 }
@@ -398,11 +413,30 @@ static void AlwaysOnHook(id self,SEL cmd,id value) {
     [_testRequest startQuestion:@"请实际联网搜索 TinyFish Search API 的官方地址，用一句中文说明，并附官方来源URL。"];
 }
 - (void)capture:(UISwitch *)sender {
-    if(!sender.on){[Prefs setBool:NO forKey:@"captureFinalText"];return;}
+    if(!sender.on){[MemorySync setCaptureEnabled:NO error:nil];[self.tableView reloadData];return;}
     sender.on=NO;
-    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"保存全天智记文字？" message:@"仅将之后收到的最终识别文字另存于官方 App 内的扩展目录。包含真实谈话内容，请确保录音和保存已获相关人员同意。不采集位置，不自动上传。" preferredStyle:UIAlertControllerStyleAlert];
+    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"保存全天智记文字？" message:@"仅将之后收到的最终识别文字另存于官方 App 内的扩展目录。这只是本机保存，不会自动上传。包含真实谈话内容，请确保已经获得相关人员同意。" preferredStyle:UIAlertControllerStyleAlert];
     [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
-    [a addAction:[UIAlertAction actionWithTitle:@"启用本机保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){Controller.captureEpoch=NSUUID.UUID.UUIDString;[Prefs setBool:YES forKey:@"captureFinalText"];[self.tableView reloadData];}]];[self presentViewController:a animated:YES completion:nil];
+    [a addAction:[UIAlertAction actionWithTitle:@"启用本机保存" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){[MemorySync setCaptureEnabled:YES error:nil];[self.tableView reloadData];}]];[self presentViewController:a animated:YES completion:nil];
+}
+- (void)memoryUpload:(UISwitch *)sender {
+    BOOL consented=[MemorySync.status[@"uploadConsented"] boolValue];
+    if(!sender.on){sender.on=consented;if(consented)Alert(@"已授权的队列还在",@"这个开关不能撤销已经同意的上传。要停止新建传输，请使用暂停上传。");return;}
+    sender.on=consented;
+    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"上传之后的新文字？" message:@"这不会上传此前只保存在手机上的内容。需要已经配对的 Mac。暂停或关闭保存都不会删除已有副本。" preferredStyle:UIAlertControllerStyleAlert];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"同意上传新文字" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){[MemorySync grantUploadConsent:nil];[MemorySync syncNow];[self.tableView reloadData];}]];
+    [self presentViewController:a animated:YES completion:nil];
+}
+- (void)memoryPause:(UISwitch *)sender {[MemorySync setUploadPaused:sender.on error:nil];[self.tableView reloadData];}
+- (void)pairMemory {
+    NSString *source=MemorySync.store.sourceId?:@"";
+    UIAlertController *a=[UIAlertController alertControllerWithTitle:@"配对 Mac" message:[NSString stringWithFormat:@"来源 %@。填写 https 源站和只显示一次的令牌。这一步不上传归档。来源是这次安装的编号，不是雷鸟账号。",source] preferredStyle:UIAlertControllerStyleAlert];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *f){f.placeholder=@"https://mac.tailnet.ts.net";f.keyboardType=UIKeyboardTypeURL;f.autocapitalizationType=UITextAutocapitalizationTypeNone;f.autocorrectionType=UITextAutocorrectionTypeNo;}];
+    [a addTextFieldWithConfigurationHandler:^(UITextField *f){f.placeholder=@"配对令牌";f.secureTextEntry=YES;f.autocapitalizationType=UITextAutocapitalizationTypeNone;}];
+    [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [a addAction:[UIAlertAction actionWithTitle:@"配对" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){NSString *origin=a.textFields[0].text?:@"",*token=a.textFields[1].text?:@"";a.textFields[1].text=@"";NSError *error=nil;if(![MemorySync pairOrigin:origin token:token error:&error]){Alert(@"未配对",error.localizedDescription?:@"源站或令牌无效");return;}[self.tableView reloadData];}]];
+    [self presentViewController:a animated:YES completion:nil];
 }
 - (void)configure {
     UIAlertController *a=[UIAlertController alertControllerWithTitle:@"自有模型接口" message:@"填写完整 HTTPS /chat/completions 地址。Key 仅存手机钥匙串；留空保留同一地址的旧 Key，改地址不会带过去。" preferredStyle:UIAlertControllerStyleAlert];
@@ -432,7 +466,16 @@ static void AlwaysOnHook(id self,SEL cmd,id value) {
     #endif
     if([r[@"key"] isEqual:@"experimentalOTA"]){[self.navigationController pushViewController:TIOExperimentalOTAController() animated:YES];return;}
 #endif
-    if([@[@"thinking",@"search",@"exit",@"capture",@"tts"] containsObject:r[@"key"]])return;
+    if([@[@"thinking",@"search",@"exit",@"capture",@"tts",@"memoryUpload",@"memoryPause"] containsObject:r[@"key"]])return;
+    if([r[@"key"] isEqual:@"memoryPair"]){[self pairMemory];return;}
+    if([r[@"key"] isEqual:@"memorySyncNow"]){[MemorySync syncNow];[self.tableView reloadData];return;}
+    if([r[@"key"] isEqual:@"memoryHistory"]){
+        UIAlertController *a=[UIAlertController alertControllerWithTitle:@"上传已有副本？" message:@"只把已经保存在手机上、还没进入上传队列的文字加入队列。不会重新同意未来的新文字。" preferredStyle:UIAlertControllerStyleAlert];
+        [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        [a addAction:[UIAlertAction actionWithTitle:@"加入队列" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){NSError *error=nil;if(![MemorySync authorizeHistoricalUpload:&error]){Alert(@"没有加入",error.localizedDescription?:@"请先配对");return;}[MemorySync syncNow];[self.tableView reloadData];}]];
+        [self presentViewController:a animated:YES completion:nil];return;
+    }
+    if([r[@"key"] isEqual:@"memoryQueue"]){[self.tableView reloadData];return;}
     NSInteger section=[r[@"section"] integerValue],row=[r[@"row"] integerValue];
     if(section>=0){[self legacySelect:tableView at:[NSIndexPath indexPathForRow:row inSection:section]];return;}
     Class cls=NSClassFromString(@[@"TIORecordingExportsPanel",@"TIORecordingTextPanel",@"TIOLifelogExportsPanel",@"TIOAlwaysOnAudioPanel"][row]);
@@ -499,6 +542,33 @@ static BOOL VersionMatches(void) {
     for(uint32_t i=0;i<_dyld_image_count();i++){const char *name=_dyld_get_image_name(i);if(name&&executable&&strcmp(name,executable)==0){h=_dyld_get_image_header(i);break;}}
     return TIOHostImageMatches(h,NSBundle.mainBundle.infoDictionary);
 }
+static void BackgroundSessionHook(id self,SEL cmd,UIApplication *application,NSString *identifier,void (^completion)(void)) {
+    if(TIOMemorySyncIsOwnSession(identifier)){[MemorySync handleBackgroundEvents:completion];return;}
+    if(OriginalBackground)((void (*)(id,SEL,UIApplication *,NSString *,void (^)(void)))OriginalBackground)(self,cmd,application,identifier,completion);
+    else if(completion)completion();
+}
+static BOOL OpenURLHook(id self,SEL cmd,UIApplication *application,NSURL *url,NSDictionary *options) {
+    BOOL handled=[MemorySync handleURL:url];
+    BOOL forwarded=OriginalOpenURL?((BOOL (*)(id,SEL,UIApplication *,NSURL *,NSDictionary *))OriginalOpenURL)(self,cmd,application,url,options):NO;
+    return handled||forwarded;
+}
+static BOOL ReplaceOrAdd(Class cls,SEL sel,IMP hook,const char *types,IMP *saved) {
+    unsigned int count=0;Method own=NULL;Method *list=class_copyMethodList(cls,&count);
+    for(unsigned int i=0;i<count;i++)if(method_getName(list[i])==sel)own=list[i];
+    free(list);
+    if(own){*saved=method_setImplementation(own,hook);return YES;}
+    if(!class_addMethod(cls,sel,hook,types))return NO;
+    Class parent=class_getSuperclass(cls);Method inherited=parent?class_getInstanceMethod(parent,sel):NULL;
+    *saved=inherited?method_getImplementation(inherited):NULL;return YES;
+}
+static void InstallMemoryDelegateHooks(void) {
+    static BOOL installed=NO;if(installed)return;
+    id<UIApplicationDelegate> delegate=UIApplication.sharedApplication.delegate;if(!delegate)return;
+    Class cls=object_getClass(delegate);
+    ReplaceOrAdd(cls,@selector(application:handleEventsForBackgroundURLSession:completionHandler:),(IMP)BackgroundSessionHook,"v@:@@@?",&OriginalBackground);
+    ReplaceOrAdd(cls,@selector(application:openURL:options:),(IMP)OpenURLHook,"B@:@@@",&OriginalOpenURL);
+    installed=YES;
+}
 static void AddEntry(void) {
     UIViewController *top=TopController();UIWindow *window=top.view.window;if(!window)return;
     if(top.tabBarController.view.tag==7920||top.view.tag==7920){Entry.hidden=YES;return;}
@@ -532,13 +602,17 @@ __attribute__((constructor)) static void Load(void) {
             // Research rows are explicit routes now, not a chain of table hooks.
             [Prefs registerDefaults:@{@"voiceExitCommands":@YES,@"ttsEnabled":@YES,@"ttsEngine":@"local"}];
             // Do not automatically resume text capture or a model takeover after relaunch/crash.
-            [Prefs setBool:NO forKey:@"captureFinalText"];[Prefs setInteger:0 forKey:@"mode"];
+            [Prefs setInteger:0 forKey:@"mode"];
             [Prefs removeObjectForKey:@"verifiedChatDomain"];
             NSURL *library=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
-            Archive=[[TIOTranscriptArchive alloc]initWithDirectory:[library URLByAppendingPathComponent:@"TurboIOPrivateAddon" isDirectory:YES]];ArchiveQueue=dispatch_queue_create("io.turboio.private.archive",DISPATCH_QUEUE_SERIAL);
+            NSURL *memoryDirectory=[library URLByAppendingPathComponent:@"TurboIOPrivateAddon" isDirectory:YES];
+            Archive=[[TIOTranscriptArchive alloc]initWithDirectory:memoryDirectory];ArchiveQueue=dispatch_queue_create("io.turboio.private.archive",DISPATCH_QUEUE_SERIAL);
+            NSError *memoryError=nil;
+            MemorySync=[[TIOMemorySyncRuntime alloc]initWithDirectory:memoryDirectory error:&memoryError];
             Class voice=NSClassFromString(@"rayneo_venus_sdk_plugin.AiResultListenerBridge"),ao=NSClassFromString(@"rayneo_venus_sdk_plugin.AlwaysOnResultListenerBridge");
             BOOL valid=VersionMatches()&&Signature(voice,@"onAsrResult:isFinish:sessionId:",5,"v",@[@"@",@"Bc",@"@"])&&Signature(voice,@"onNlpResult:",3,"v",@[@"@"])&&Signature(voice,@"onResponseComplete",2,"v",@[])&&Signature(ao,@"onAlwaysOnResponse:",3,"v",@[@"@"]);
-            if(valid){OriginalAsr=(void *)method_setImplementation(class_getInstanceMethod(voice,NSSelectorFromString(@"onAsrResult:isFinish:sessionId:")),(IMP)AsrHook);OriginalNlp=(void *)method_setImplementation(class_getInstanceMethod(voice,NSSelectorFromString(@"onNlpResult:")),(IMP)NlpHook);OriginalComplete=(void *)method_setImplementation(class_getInstanceMethod(voice,NSSelectorFromString(@"onResponseComplete")),(IMP)CompleteHook);OriginalAlwaysOn=(void *)method_setImplementation(class_getInstanceMethod(ao,NSSelectorFromString(@"onAlwaysOnResponse:")),(IMP)AlwaysOnHook);HooksReady=YES;Diagnostic=@"版本和 ObjC 回调签名匹配，等待真实事件";}else Diagnostic=@"版本或 ABI 不匹配：未修改任何回调";
+            if(valid){OriginalAsr=(void *)method_setImplementation(class_getInstanceMethod(voice,NSSelectorFromString(@"onAsrResult:isFinish:sessionId:")),(IMP)AsrHook);OriginalNlp=(void *)method_setImplementation(class_getInstanceMethod(voice,NSSelectorFromString(@"onNlpResult:")),(IMP)NlpHook);OriginalComplete=(void *)method_setImplementation(class_getInstanceMethod(voice,NSSelectorFromString(@"onResponseComplete")),(IMP)CompleteHook);OriginalAlwaysOn=(void *)method_setImplementation(class_getInstanceMethod(ao,NSSelectorFromString(@"onAlwaysOnResponse:")),(IMP)AlwaysOnHook);HooksReady=YES;[MemorySync setCompatibilityPaused:NO error:nil];Diagnostic=@"版本和 ObjC 回调签名匹配，等待真实事件";}else{[MemorySync setCompatibilityPaused:YES error:nil];Diagnostic=@"版本或 ABI 不匹配：未修改任何回调";}
+            if(!MemorySync)Diagnostic=memoryError.localizedDescription?:@"本机归档没有打开，未写入也未上传";
             Class helper=NSClassFromString(@"rayneo_venus_sdk_plugin.VoiceAssistantHelper");
             VoiceExitReady=valid&&Signature(object_getClass(helper),@"shared",2,"@",@[])&&Signature(helper,@"stopWorkflow",2,"v",@[])&&Signature(voice,@"onAudioRecordStart",2,"v",@[]);
             if(VoiceExitReady)OriginalAudioStart=(void *)method_setImplementation(class_getInstanceMethod(voice,NSSelectorFromString(@"onAudioRecordStart")),(IMP)AudioStartHook);
@@ -548,7 +622,8 @@ __attribute__((constructor)) static void Load(void) {
             for(uint32_t i=0;i<_dyld_image_count();i++){const char *name=_dyld_get_image_name(i);if(name&&[[NSString stringWithUTF8String:name].lastPathComponent isEqual:@"Runner"]){const struct mach_header *h=_dyld_get_image_header(i);[loadInfo appendFormat:@"Runner image index=%u magic=%x\n",i,h->magic];}}
             for(NSString *sel in @[@"onAsrResult:isFinish:sessionId:",@"onNlpResult:",@"onResponseComplete",@"onAlwaysOnResponse:"]){Method m=class_getInstanceMethod([sel isEqual:@"onAlwaysOnResponse:"]?ao:voice,NSSelectorFromString(sel));[loadInfo appendFormat:@"%@ %s\n",sel,m?method_getTypeEncoding(m):"missing"];}
             [loadInfo writeToFile:[NSTemporaryDirectory() stringByAppendingPathComponent:@"TurboIOPrivateAddon-load.txt"] atomically:YES encoding:NSUTF8StringEncoding error:nil];
-            [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){AddEntry();}];
+            InstallMemoryDelegateHooks();
+            [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidBecomeActiveNotification object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){InstallMemoryDelegateHooks();[MemorySync syncNow];AddEntry();}];
             [NSNotificationCenter.defaultCenter addObserverForName:@"TIOResearchClosed" object:nil queue:NSOperationQueue.mainQueue usingBlock:^(NSNotification *n){AddEntry();}];
             dispatch_after(dispatch_time(DISPATCH_TIME_NOW,2*NSEC_PER_SEC),dispatch_get_main_queue(),^{AddEntry();});
         }

@@ -1,5 +1,6 @@
 #import "Core.h"
 #import "Profile.h"
+#import "memory-sync/MemorySyncStore.h"
 #include <math.h>
 
 @implementation TIOIdleExitGate {
@@ -138,62 +139,40 @@ NSDictionary *TIOChatRequestWithHistory(NSString *model, NSString *question, NSA
 
 @interface TIOTranscriptArchive ()
 @property(nonatomic) NSURL *directory;
+@property(nonatomic) TIOMemorySyncStore *store;
 @end
 @implementation TIOTranscriptArchive
 - (instancetype)initWithDirectory:(NSURL *)directory { if ((self=[super init])) _directory=directory; return self; }
-- (NSURL *)journal { return [_directory URLByAppendingPathComponent:@"final-transcripts.json"]; }
-- (NSError *)failure { return [NSError errorWithDomain:@"TurboIOPrivateArchive" code:1 userInfo:@{NSLocalizedDescriptionKey:@"归档读取或写入失败；原数据没有删除。"}]; }
-- (NSMutableArray *)load:(NSError **)error {
-    NSURL *file=[self journal];
-    if (![NSFileManager.defaultManager fileExistsAtPath:file.path]) return [NSMutableArray array];
-    NSNumber *size=nil,*link=nil;
-    [file getResourceValue:&link forKey:NSURLIsSymbolicLinkKey error:nil];
-    [file getResourceValue:&size forKey:NSURLFileSizeKey error:nil];
-    if (link.boolValue || !size || size.unsignedLongLongValue>32*1024*1024) { if(error)*error=[self failure]; return nil; }
-    NSData *data=[NSData dataWithContentsOfURL:file options:0 error:error]; if (!data) return nil;
-    id rows=[NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:error];
-    if (![rows isKindOfClass:NSMutableArray.class] || [rows count]>20000) { if(error)*error=[self failure]; return nil; }
-    for (id r in rows) if (![r isKindOfClass:NSDictionary.class] || ![r[@"id"] isKindOfClass:NSString.class] || ![r[@"text"] isKindOfClass:NSString.class] || ![r[@"at"] isKindOfClass:NSString.class] || ![r[@"role"] isKindOfClass:NSString.class]) { if(error)*error=[self failure]; return nil; }
-    return rows;
+- (TIOMemorySyncStore *)open:(NSError **)error {
+    if (!_store) _store=[[TIOMemorySyncStore alloc] initWithDirectory:_directory error:error];
+    return _store;
 }
 - (BOOL)recordText:(NSString *)text round:(NSString *)round role:(NSString *)role at:(NSDate *)date error:(NSError **)error {
-    @synchronized(self) {
-        if (!text.length || text.length>32000 || round.length>512 || role.length>80) return NO;
-        if (![NSFileManager.defaultManager createDirectoryAtURL:_directory withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error]) return NO;
-        NSMutableArray *rows=[self load:error]; if (!rows) return NO;
-        NSISO8601DateFormatter *fmt=[NSISO8601DateFormatter new];
-        // Hashing/UUID avoids identifiers becoming filenames. Unknown rounds are never merged.
-        NSString *identity=round.length?[NSString stringWithFormat:@"%@|%@",round,role]:NSUUID.UUID.UUIDString;
-        NSUInteger idx=[rows indexOfObjectPassingTest:^BOOL(NSDictionary *r,NSUInteger i,BOOL *stop){ return [r[@"id"] isEqual:identity]; }];
-        NSString *at=idx==NSNotFound?[fmt stringFromDate:date]:rows[idx][@"at"];
-        NSDictionary *row=@{@"id":identity,@"role":role,@"text":text,@"at":at,@"updatedAt":[fmt stringFromDate:date]};
-        if(idx==NSNotFound) { if(rows.count>=20000) {if(error)*error=[self failure];return NO;} [rows addObject:row]; } else rows[idx]=row;
-        NSData *data=[NSJSONSerialization dataWithJSONObject:rows options:NSJSONWritingPrettyPrinted error:error];
-        if (!data || data.length>32*1024*1024) {if(error)*error=[self failure];return NO;}
-        BOOL ok=[data writeToURL:[self journal] options:NSDataWritingAtomic error:error];
-        if(ok) [NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:[self journal].path error:nil];
-        return ok;
-    }
+    TIOMemorySyncStore *store=[self open:error]; if (!store) return NO;
+    NSDictionary *result=[store recordText:text round:round role:role at:date generation:0 applyUploadPolicy:NO error:error];
+    return [result[@"accepted"] boolValue];
+}
+- (NSArray<NSDictionary *> *)snapshot:(NSError **)error {
+    TIOMemorySyncStore *store=[self open:error]; if (!store) return nil;
+    return [store snapshot:error];
 }
 - (NSArray<NSURL *> *)exportAt:(NSDate *)date error:(NSError **)error {
-    @synchronized(self) {
-        NSArray *rows=[self load:error]; if (!rows) return nil;
-        if(!rows.count) {if(error)*error=[NSError errorWithDomain:@"TurboIOPrivateArchive" code:2 userInfo:@{NSLocalizedDescriptionKey:@"暂无本扩展保存的最终文字。请先开启旁路保存，再使用官方全天智记；旧历史记录暂未导入。"}];return nil;}
-        NSURL *folder=[_directory URLByAppendingPathComponent:[@"exports/" stringByAppendingString:NSUUID.UUID.UUIDString] isDirectory:YES];
-        if(![NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error]) return nil;
-        NSMutableString *md=[NSMutableString stringWithString:@"# 全天智记导出\n\n来源：启用私用扩展后旁路保存的官方最终文字。不代表完整历史或逐字准确稿。\n\n"];
-        NSMutableArray *publicRows=[NSMutableArray array];
-        for(NSDictionary *row in rows) {
-            [publicRows addObject:@{@"at":row[@"at"],@"role":row[@"role"],@"text":row[@"text"]}];
-            [md appendFormat:@"## %@\n\n",row[@"at"]];
-            for(NSString *line in [row[@"text"] componentsSeparatedByString:@"\n"]) [md appendFormat:@"> %@\n",line];
-            [md appendString:@"\n"];
-        }
-        NSURL *markdown=[folder URLByAppendingPathComponent:@"全天智记.md"], *json=[folder URLByAppendingPathComponent:@"全天智记.json"];
-        NSData *data=[NSJSONSerialization dataWithJSONObject:publicRows options:NSJSONWritingPrettyPrinted error:error];
-        if(!data || ![data writeToURL:json options:NSDataWritingAtomic error:error] || ![md writeToURL:markdown atomically:YES encoding:NSUTF8StringEncoding error:error]) return nil;
-        for(NSURL *file in @[markdown,json]) [NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:file.path error:nil];
-        return @[markdown,json];
+    NSArray<NSDictionary *> *rows=[self snapshot:error]; if (!rows) return nil;
+    if(!rows.count) {if(error)*error=[NSError errorWithDomain:@"TurboIOPrivateArchive" code:2 userInfo:@{NSLocalizedDescriptionKey:@"暂无本扩展保存的最终文字。请先开启旁路保存，再使用官方全天智记；旧历史记录暂未导入。"}];return nil;}
+    NSURL *folder=[_directory URLByAppendingPathComponent:[@"exports/" stringByAppendingString:NSUUID.UUID.UUIDString] isDirectory:YES];
+    if(![NSFileManager.defaultManager createDirectoryAtURL:folder withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:error]) return nil;
+    NSMutableString *md=[NSMutableString stringWithString:@"# 全天智记导出\n\n来源：启用私用扩展后旁路保存的官方最终文字。不代表完整历史或逐字准确稿。身份和修订号保留在导出里。\n\n"];
+    NSMutableArray *publicRows=[NSMutableArray array];
+    for(NSDictionary *row in rows) {
+        [publicRows addObject:@{@"id":row[@"id"],@"revision":row[@"revision"],@"sessionId":row[@"sessionId"],@"at":row[@"at"],@"updatedAt":row[@"updatedAt"],@"role":row[@"role"],@"text":row[@"text"]}];
+        [md appendFormat:@"## %@ · %@ · rev %@\n\n",row[@"at"],row[@"id"],row[@"revision"]];
+        for(NSString *line in [row[@"text"] componentsSeparatedByString:@"\n"]) [md appendFormat:@"> %@\n",line];
+        [md appendString:@"\n"];
     }
+    NSURL *markdown=[folder URLByAppendingPathComponent:@"全天智记.md"], *json=[folder URLByAppendingPathComponent:@"全天智记.json"];
+    NSData *data=[NSJSONSerialization dataWithJSONObject:publicRows options:NSJSONWritingPrettyPrinted error:error];
+    if(!data || ![data writeToURL:json options:NSDataWritingAtomic error:error] || ![md writeToURL:markdown atomically:YES encoding:NSUTF8StringEncoding error:error]) return nil;
+    for(NSURL *file in @[markdown,json]) [NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:file.path error:nil];
+    return @[markdown,json];
 }
 @end
