@@ -1,8 +1,19 @@
 #import "NativeNavigationUI.h"
+#if TIO_DAILY_NAVIGATION
+#import "NavigationCompatibility.h"
+#import "NavigationFreshness.h"
+static NSUInteger RouteGeneration;
+static NSTimeInterval NavigationObservedAt;
+static BOOL FreshFrame(NSDictionary *frame,NSUInteger generation){
+ return [TIONavigationFreshness(frame,generation,NSProcessInfo.processInfo.systemUptime)[@"navigationInfoFresh"] boolValue];
+}
+#endif
 #import "NativeNavigation.h"
 #import "TNVTransport.h"
 #import "ProtocolContext.h"
+#if TIO_OTA_RESEARCH_ENABLED
 #import "ExperimentalOTAFlash.h"
+#endif
 #import <UIKit/UIKit.h>
 #import <objc/message.h>
 static TNVSession *Session;static TNVTransport *Transport;static NSTimer *Timer;static NSString *Peer;static NSTimeInterval LastSave;
@@ -13,6 +24,9 @@ BOOL TNVConsume(NSDictionary *e){if(Peer&&![Peer isEqual:TIOProtocolDevice()])[S
 BOOL TNVPauseForOTA(void){return !Session.active&&!Session.busy;}
 void TNVPump(void){
  if(Peer&&![Peer isEqual:TIOProtocolDevice()])[Session disconnect];
+#if TIO_DAILY_NAVIGATION
+ if(Session.active&&(![TIONavigationCompatibilityStatus()[@"lensNavigationAllowed"] boolValue]||NSProcessInfo.processInfo.systemUptime-NavigationObservedAt>15))[Session stop];
+#endif
  [Session pump];NSTimeInterval now=NSProcessInfo.processInfo.systemUptime;if(now-LastSave<1)return;LastSave=now;
  NSString *root=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon"];
  [NSFileManager.defaultManager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:nil];
@@ -20,7 +34,17 @@ void TNVPump(void){
  NSString *file=[root stringByAppendingPathComponent:@"native-navigation-status.json"];[[NSJSONSerialization dataWithJSONObject:d options:NSJSONWritingSortedKeys error:nil] writeToFile:file options:NSDataWritingAtomic error:nil];[NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:file error:nil];
 }
 BOOL TNVStart(NSDictionary *frame){
- NSCAssert(NSThread.isMainThread,@"main only");if(Session.active||Session.busy||[TIOOTAFlashStatus()[@"stage"] unsignedIntegerValue])return NO;
+ NSCAssert(NSThread.isMainThread,@"main only");
+#if TIO_DAILY_NAVIGATION
+ id generation=frame[@"routeGeneration"];
+ if(![TIONavigationCompatibilityStatus()[@"lensNavigationAllowed"] boolValue]||![generation isKindOfClass:NSNumber.class]||!FreshFrame(frame,[generation unsignedIntegerValue]))return NO;
+ RouteGeneration=[frame[@"routeGeneration"] unsignedIntegerValue];NavigationObservedAt=[frame[@"navObservedAt"] doubleValue];
+#endif
+ if(Session.active||Session.busy
+#if TIO_OTA_RESEARCH_ENABLED
+ ||[TIOOTAFlashStatus()[@"stage"] unsignedIntegerValue]
+#endif
+ )return NO;
  NSString *device=TIOProtocolDevice();if(!device.length)return NO;TNScene scene;if(!TNVScene(frame,TNVAlways(),&scene))return NO;
  NSUserDefaults *defaults=NSUserDefaults.standardUserDefaults;uint64_t last=[[defaults objectForKey:@"TurboNavigationSessionCounterV1"] unsignedLongLongValue];
  uint64_t epoch=(uint64_t)MAX(1,NSDate.date.timeIntervalSince1970);uint64_t sid=MAX(last+1,epoch);if(sid>UINT32_MAX)return NO;
@@ -35,5 +59,11 @@ BOOL TNVStart(NSDictionary *frame){
  Session=[[TNVSession alloc]initWithDevice:device session:(uint32_t)sid clock:^{return NSProcessInfo.processInfo.systemUptime;} sender:^(NSData *packet,NSString *task,TNVSubmitted done){[transport send:packet task:task submitted:done];} cleanup:^(NSString *task){[transport cleanup:task];}];
  if(!Timer)Timer=[NSTimer scheduledTimerWithTimeInterval:0.1 repeats:YES block:^(NSTimer *t){TNVPump();}];return [Session start:frame always:TNVAlways()];
 }
-void TNVOffer(NSDictionary *frame){[Session offer:frame];}
+void TNVOffer(NSDictionary *frame){
+#if TIO_DAILY_NAVIGATION
+ if(!FreshFrame(frame,RouteGeneration)){[Session stop];return;}
+ NavigationObservedAt=[frame[@"navObservedAt"] doubleValue];
+#endif
+ [Session offer:frame];
+}
 void TNVStop(void){[Session stop];}

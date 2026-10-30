@@ -1,4 +1,7 @@
 #import "NavigationUI.h"
+#if TIO_DAILY_NAVIGATION
+#import "NavigationCompatibility.h"
+#endif
 #import "NavigationCore.h"
 #import "NavigationModes.h"
 #import "NavigationTransport.h"
@@ -65,6 +68,7 @@ static BOOL WriteNavKey(NSString *s){if(!ValidKey(s))return NO;NSDictionary *a=@
 @property UISegmentedControl *transportMode;
 @property NSInteger selectedTransport,sessionTransport;
 @property BOOL routeReady,locating;
+@property BOOL nativeAutoStartPending;
 @property BOOL navigationStarted,backgroundLocationEnabled;
 @property UIBackgroundTaskIdentifier navigationBackgroundTask;
 @property NSUInteger backgroundEpoch;
@@ -126,9 +130,10 @@ static BOOL WriteNavKey(NSString *s){if(!ValidKey(s))return NO;NSDictionary *a=@
 #if TIO_DISPLAY_PHONE
     if(![frame[@"phase"] isEqual:@"navigating"]||![frame[@"segment"] isEqual:self.display[@"segment"]])self.crossPixels=nil;
 #endif
+    if(![frame[@"phase"] isEqual:@"navigating"])self.nativeAutoStartPending=NO;
     self.display=frame;TIONavOfferDisplay(frame);[self.teleHUD offer:frame at:NSProcessInfo.processInfo.systemUptime];[self.subtitleHUD offer:frame at:NSProcessInfo.processInfo.systemUptime];
 #if TIO_DISPLAY_PHONE
-    TDPPhoneNavigationOffer([self displayHUDFrame]);[self refreshDisplayHUD];
+    [self attemptAutomaticDisplayHUD];TDPPhoneNavigationOffer([self displayHUDFrame]);[self refreshDisplayHUD];
 #endif
     [self refresh];}
 - (void)tick{
@@ -181,7 +186,7 @@ static BOOL WriteNavKey(NSString *s){if(!ValidKey(s))return NO;NSDictionary *a=@
 - (void)halt{
     self.navigationStarted=NO;self.backgroundLocationEnabled=NO;[self endNavigationBackgroundTask];
 #if TIO_DISPLAY_PHONE
-    TDPPhoneNavigationStop();self.hudIconPixels=nil;self.hudIconType=0;self.crossPixels=nil;
+    self.nativeAutoStartPending=NO;TDPPhoneNavigationStop();self.hudIconPixels=nil;self.hudIconType=0;self.crossPixels=nil;
 #endif
     [self.subtitleHUD stop:@"导航停止／切换路线"];
     [self.teleHUD stop:@"导航停止／切换路线"];

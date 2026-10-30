@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {validateOptions,entitlementsFor,validateResearchPair,memorySyncPackagingNotes,MEMORY_SYNC_SESSION_ID} from './package.mjs';
+import {validateOptions,entitlementsFor,validateResearchPair,navigationBuildManifest,memorySyncPackagingNotes,MEMORY_SYNC_SESSION_ID} from './package.mjs';
 const o={app:'/example/Runner.app',addon:'/example/addon.dylib',profile:'/example/profile.mobileprovision',out:'/example/new-output',identity:'A'.repeat(40),device:'synthetic-device',bundle:'com.example.test'};
 test('memory sync packaging adds no background mode or entitlement',()=>{
   const notes=memorySyncPackagingNotes();
@@ -50,4 +50,36 @@ test('TFP1 requires matching focus, music, navigation and exact release',()=>{
   const b=fs.readFileSync(process.env.TIO_FOCUS_RELEASE_ZIP);validateResearchPair(symbols,'TFP1',b);
   const bad=Buffer.from(b);bad[100]^=1;assert.throws(()=>validateResearchPair(symbols,'TFP1',bad));
  }
+});
+
+
+test('daily native client never carries an OTA route or candidate',()=>{
+ const daily='_TIODailyNavigationBuild _TNVStart';
+ validateResearchPair(daily,undefined);
+ for(const extra of [' _TIOOTAFlashBuild',' _TIOTLC1UpgradeBuild',' _TMMusicConsume',' _TFFocusConsume'])assert.throws(()=>validateResearchPair(daily+extra,undefined));
+ for(const kind of ['R3','TNV1','TMU1','TFP1','TLC1'])assert.throws(()=>validateResearchPair(daily,kind,Buffer.alloc(1)));
+ assert.throws(()=>validateResearchPair('_TIODailyNavigationBuild',undefined));
+ assert.throws(()=>validateResearchPair(daily,undefined,Buffer.alloc(1)));
+});
+test('TLC1 requires its own tool and exact immutable candidate',()=>{
+ const n={...o,bundle:'com.rayneo.venus.pub','experimental-ota':'TLC1',firmware:'/example/TLC1.zip'};
+ validateOptions(n);
+ assert.throws(()=>validateOptions({...n,firmware:undefined}));
+ for(const symbols of ['', '_TIOOTAFlashBuild','_TIOTLC1UpgradeBuild','_TIOTLC1UpgradeBuild _TIOOTAFlashBuild _TNVStart'])assert.throws(()=>validateResearchPair(symbols,'TLC1',Buffer.alloc(9322471)));
+ assert.throws(()=>validateResearchPair('_TIOTLC1UpgradeBuild _TIOOTAFlashBuild',undefined));
+ if(process.env.TIO_TLC1_RELEASE_ZIP){
+  const bytes=fs.readFileSync(process.env.TIO_TLC1_RELEASE_ZIP);
+  validateResearchPair('_TIOTLC1UpgradeBuild _TIOOTAFlashBuild','TLC1',bytes);
+  const corrupt=Buffer.from(bytes);corrupt[100]^=1;
+  assert.throws(()=>validateResearchPair('_TIOTLC1UpgradeBuild _TIOOTAFlashBuild','TLC1',corrupt));
+ }
+});
+
+test('daily manifest records unavailable SDK and control contract honestly',()=>{
+ const b=navigationBuildManifest('_TIODailyNavigationBuild',Buffer.from('synthetic'),'a'.repeat(40),'b'.repeat(64));
+ assert.equal(b.sdkVersions,null);assert.equal(b.verifiedControlContractVersion,null);
+ assert.equal(b.physicalVerified,false);assert.equal(b.otaToolBuild,false);
+ assert.equal(b.lifelogPolicy,'pause-restore');
+ assert.equal(navigationBuildManifest('',Buffer.alloc(0),'a'.repeat(40),'b'.repeat(64)),null);
+ assert.throws(()=>navigationBuildManifest('_TIODailyNavigationBuild',Buffer.alloc(0),'unknown','b'.repeat(64)));
 });

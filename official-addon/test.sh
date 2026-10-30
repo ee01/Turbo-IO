@@ -2,6 +2,20 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p build
+for profile in TIO_DAILY_NAVIGATION TIO_TLC1_UPGRADE; do
+  task_ota_flag=0
+  if [[ "$profile" == TIO_TLC1_UPGRADE ]]; then task_ota_flag=1; fi
+  xcrun clang -fobjc-arc -fmodules -Wall -Wextra -D"$profile"=1 -DTIO_OTA_RESEARCH_ENABLED="$task_ota_flag" -framework Foundation ResearchCatalog.m navigation/BuildProfileTests.m -o "build/$profile-tests"
+  "./build/$profile-tests"
+done
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation navigation/NavigationFreshness.m navigation/NavigationFreshnessTests.m -o build/navigation-freshness-tests
+./build/navigation-freshness-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -I . -framework Foundation navigation/NavigationCompatibility.m navigation/NavigationCompatibilityTests.m -o build/navigation-compatibility-tests
+./build/navigation-compatibility-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation navigation/NavigationLifeLogCoordinator.m navigation/NavigationLifeLogTests.m -o build/navigation-lifelog-tests
+./build/navigation-lifelog-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation navigation/NavigationVoiceIntent.m navigation/NavigationVoiceTests.m -o build/navigation-voice-tests
+./build/navigation-voice-tests
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -framework Foundation NavigationBackgroundTests.m -o build/navigation-background-tests
 ./build/navigation-background-tests
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation HostCompatibilityTests.m -o build/host-compatibility-tests

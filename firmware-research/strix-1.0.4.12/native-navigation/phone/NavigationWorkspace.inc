@@ -35,7 +35,9 @@
     self.lensStatus=[self navLabel:@"尚未向眼镜发送导航" size:12 weight:UIFontWeightRegular];self.lensStatus.textColor=UIColor.secondaryLabelColor;self.lensStatus.accessibilityIdentifier=@"navigation-lens-status";[self.lensCard addArrangedSubview:self.lensStatus];
     self.hudLabel=[self navLabel:@"等待导航指引" size:19 weight:UIFontWeightMedium];self.hudLabel.textAlignment=NSTextAlignmentCenter;self.hudLabel.textColor=[UIColor colorWithRed:0.28 green:1 blue:0.42 alpha:1];self.hudLabel.backgroundColor=[UIColor colorWithWhite:0.035 alpha:1];self.hudLabel.layer.cornerRadius=14;self.hudLabel.clipsToBounds=YES;self.hudLabel.accessibilityIdentifier=@"navigation-hud";[self.hudLabel.heightAnchor constraintGreaterThanOrEqualToConstant:148].active=YES;[self.lensCard addArrangedSubview:self.hudLabel];
     UILabel *preview=[self navLabel:@"文字内容预览，非镜片截图；实际排版由眼镜决定。" size:11 weight:UIFontWeightRegular];preview.textColor=UIColor.secondaryLabelColor;[self.lensCard addArrangedSubview:preview];
+#if !TIO_DAILY_NAVIGATION
     self.lensButton=[self navAction:@"开启眼镜字幕显示" icon:@"eyeglasses" selector:@selector(toggleLens) primary:NO];self.lensButton.accessibilityIdentifier=@"navigation-subtitle-enable";[self.lensCard addArrangedSubview:self.lensButton];
+#endif
 #if TIO_DISPLAY_PHONE
     [self buildDisplayHUD];
 #endif
@@ -64,7 +66,11 @@
     NSDictionary *s=self.subtitleHUD.status,*runtime=TIOSubtitleNavigationStatus();BOOL on=[s[@"enabled"] boolValue];
     UIButtonConfiguration *lens=self.lensButton.configuration;lens.title=on?@"停止眼镜显示（保留手机导航）":@"开启眼镜字幕显示";self.lensButton.configuration=lens;
     self.lensButton.enabled=on||[self canStartSubtitle];
+#if !TIO_DAILY_NAVIGATION
     self.lensStatus.text=on?[NSString stringWithFormat:@"%@ · 已提交 %@ 帧（非镜片回执）",s[@"note"],s[@"frames"]]:[NSString stringWithFormat:@"%@\n%@",s[@"note"]?:@"尚未开启",[runtime[@"available"] boolValue]?@"字幕格式已就绪 · 需确认眼镜空闲":@"等待当前眼镜连接或兼容配置；无需每次预览"];
+#else
+    self.lensStatus.hidden=YES;
+#endif
     if(!running)self.hudLabel.text=self.planning?@"正在规划路线…":self.routeReady?@"路线已就绪\n点击开始后产生指引":@"等待导航指引\n\n转向 · 距离 · 道路";
 }
 - (void)modeChanged{if(![self prepareForSelection])return;self.mapPickRole.selectedSegmentIndex=0;self.routeSummary.text=@"尚未规划路线";self.note=self.travelMode.selectedSegmentIndex==0?@"模拟起点单独保存：切换“选模拟起点”后点地图。":@"实时导航使用手机位置；眼镜字幕暂仅开放模拟。请勿边驾驶边操作。";[self refresh];}
@@ -85,7 +91,7 @@
     self.backgroundLocationEnabled=!self.simulated&&[self navigationLocationModeAvailable]&&[self navigationLocationAuthorized];
     self.manager.allowsBackgroundLocationUpdates=self.backgroundLocationEnabled;
     self.manager.pausesLocationUpdatesAutomatically=!self.backgroundLocationEnabled;
-    BOOL ok=self.simulated?[self.manager startEmulatorNavi]:[self.manager startGPSNavi];if(!ok){[self fail:@"导航启动失败，可停止后重新规划"];return;}self.routeReady=NO;self.navigationStarted=YES;self.lastInfo=NSProcessInfo.processInfo.systemUptime;self.note=self.simulated?@"模拟已开始；可单独开启眼镜显示，不会自动抢占眼镜。":(self.backgroundLocationEnabled?@"实时导航已开始，可退后台或锁屏；不要强退App。请以手机地图及实际路况为准。":@"实时导航已开始，但宿主缺少location后台模式，只能前台运行。");[self refresh];
+    BOOL ok=self.simulated?[self.manager startEmulatorNavi]:[self.manager startGPSNavi];if(!ok){[self fail:@"导航启动失败，可停止后重新规划"];return;}self.routeReady=NO;self.navigationStarted=YES;self.nativeAutoStartPending=YES;self.lastInfo=NSProcessInfo.processInfo.systemUptime;self.note=self.simulated?@"模拟已开始；正在检查眼镜导航条件。":(self.backgroundLocationEnabled?@"实时导航已开始，可退后台或锁屏；不要强退App。请以手机地图及实际路况为准。":@"实时导航已开始，但宿主缺少location后台模式，只能前台运行。");[self refresh];
 #endif
 }
 - (void)toggleLens{if([self.subtitleHUD.status[@"enabled"] boolValue]){[self.subtitleHUD stop:@"用户停止眼镜显示，手机导航继续"];[self refresh];}else [self enableSubtitleHUD];}
