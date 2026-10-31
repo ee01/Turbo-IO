@@ -52,6 +52,21 @@ export function navigationBuildManifest(symbols,addon,sourceCommit,sourceDigest)
     expectedFirmwareFamily:'TLC1',candidateZipSha256:'5e2b85acb9cd25e0b245838e665e39d291eae4aae640308f126718eb3185e519',
     lifelogPolicy:'pause-restore',verifiedControlContractVersion:null,otaToolBuild:false,physicalVerified:false};
 }
+// Local packaging may seed the phone keychain. The value never enters the report.
+export function readPrivateAmapKey(file){
+  if(typeof file!=='string'||!path.isAbsolute(file))throw Error('amap_key_file_required');
+  const st=fs.lstatSync(file);
+  if(!st.isFile()||st.isSymbolicLink()||st.size<2||st.size>4096||(st.mode&0o077))throw Error('amap_key_file_private');
+  let parsed;try{parsed=JSON.parse(fs.readFileSync(file,'utf8'));}catch{throw Error('amap_key_file_private');}
+  const key=parsed?.apiKey,bundle=parsed?.bundleIdentifier;
+  if(typeof key!=='string'||typeof bundle!=='string'||!/^[0-9a-fA-F]{32}$/.test(key)||!/^[A-Za-z0-9][A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$/.test(bundle)||Object.keys(parsed).some(k=>k!=='apiKey'&&k!=='bundleIdentifier'))throw Error('amap_key_file_private');
+  return {apiKey:key,bundleIdentifier:bundle};
+}
+export function packageReport(base,secret){
+  const report={...base};
+  if(secret&&JSON.stringify(report).includes(secret))throw Error('amap_key_leaked_to_report');
+  return report;
+}
 export function entitlementsFor(p,o) {
   if(!Array.isArray(p.certs)||!p.certs.includes(o.identity.toUpperCase())||!Array.isArray(p.devices)||!p.devices.includes(o.device)||!(Date.parse(p.expires)>Date.now()))throw Error('profile_identity_device_or_expiry_mismatch');
   const e=structuredClone(p.entitlements), appID=e?.['application-identifier'];
@@ -65,11 +80,13 @@ function main(){
   if(process.argv.includes('--help'))console.log('Daily navigation: TIO_BUILD_PROFILE=daily-navigation, no --experimental-ota or firmware. Separate TLC1 tool: TIO_BUILD_PROFILE=tlc1-upgrade and --experimental-ota TLC1 --firmware /absolute/exact-TLC1.zip.');
   if(process.argv.includes('--help'))console.log('FOCUS-04 integrated edition: --experimental-ota TFP1 --firmware /absolute/exact-FOCUS04-release.zip; see focus-edition/README.md. Optional translation resources may be omitted for this edition.');
   if(process.argv.includes('--help'))console.log('Optional local translation: --translation-module-dir /absolute/module --translation-models /absolute/models (requires TIO_LOCAL_TRANSLATION=1 addon; see local-translation/README.md)');
-  if(process.argv.includes('--help')){console.log('node official-addon/package.mjs --app /absolute/Runner.app --addon /absolute/TurboIOPrivateAddon.dylib --profile /absolute/profile.mobileprovision --identity CERTIFICATE_SHA1 --device YOUR_DEVICE_ID --out /absolute/new-private-output [--bundle com.rayneo.venus.pub] [--product iPhone18,4] [--amap-sdk-root /absolute/build/amap-sdk] [--experimental-ota R3|TNV1|TMU1 --firmware /absolute/matching-firmware.zip (required for TNV1/TMU1; HIGH RISK)]');return;}
+  if(process.argv.includes('--help')){console.log('node official-addon/package.mjs --app /absolute/Runner.app --addon /absolute/TurboIOPrivateAddon.dylib --profile /absolute/profile.mobileprovision --identity CERTIFICATE_SHA1 --device YOUR_DEVICE_ID --out /absolute/new-private-output [--bundle com.rayneo.venus.pub] [--product iPhone18,4] [--amap-sdk-root /absolute/build/amap-sdk] [--amap-key-file /absolute/private-amap.json] [--experimental-ota R3|TNV1|TMU1 --firmware /absolute/matching-firmware.zip (required for TNV1/TMU1; HIGH RISK)]');return;}
   const o={bundle:'com.rayneo.venus.pub'};const args=process.argv.slice(2);
   if(args.length%2)throw Error('expected_named_arguments');
-  const seen=new Set();for(let i=0;i<args.length;i+=2){const k=args[i].slice(2);if(!args[i].startsWith('--')||!['app','addon','profile','identity','device','out','bundle','product','amap-sdk-root','experimental-ota','firmware','translation-module-dir','translation-models'].includes(k)||seen.has(k))throw Error('unknown_or_duplicate_argument');seen.add(k);o[k]=args[i+1];}
+  const seen=new Set();for(let i=0;i<args.length;i+=2){const k=args[i].slice(2);if(!args[i].startsWith('--')||!['app','addon','profile','identity','device','out','bundle','product','amap-sdk-root','experimental-ota','firmware','translation-module-dir','translation-models','amap-key-file'].includes(k)||seen.has(k))throw Error('unknown_or_duplicate_argument');seen.add(k);o[k]=args[i+1];}
   validateOptions(o);
+  const amapKey=o['amap-key-file']?readPrivateAmapKey(o['amap-key-file']):null;
+  if(amapKey&&amapKey.bundleIdentifier!==o.bundle)throw Error('amap_key_bundle_mismatch');
   const mapResources=o['amap-sdk-root']?amapResources(o['amap-sdk-root']):[];
   const symbols=run('/usr/bin/nm',['-g',o.addon],{encoding:'utf8',maxBuffer:64*1024*1024});
   // FOCUS has a dynamic optional entry even without the translation module.
@@ -77,6 +94,7 @@ function main(){
   validateTranslationPair(focusEdition&&!o['translation-module-dir']&&!o['translation-models']?symbols.replaceAll('_TIOOpenLocalTranslation',''):symbols,o);
   const translationResources=prepareTranslationResources(o);
   if(symbols.includes('OBJC_CLASS_$_AMapNaviWalkManager')&&!mapResources.length)throw Error('amap_resources_option_required');
+  if(amapKey&&!symbols.includes('OBJC_CLASS_$_AMapNaviWalkManager'))throw Error('amap_key_without_sdk');
   const source=fs.realpathSync(o.app),destination=path.resolve(o.out);
   const researchAddon=symbols.includes('_TIOOTAFlashBuild');
   if(researchAddon!==Boolean(o['experimental-ota']))throw Error('research_addon_and_explicit_option_must_match');
@@ -137,6 +155,7 @@ print(json.dumps({'entitlements':p['Entitlements'],'expires':p['ExpirationDate']
   const ep=path.join(destination,'signing-entitlements.plist');
   run('python3',['-c','import sys,json,plistlib; plistlib.dump(json.load(sys.stdin),open(sys.argv[1],"wb"))',ep],{input:JSON.stringify(entitlement)});fs.chmodSync(ep,0o600);
   fs.copyFileSync(o.profile,path.join(app,'embedded.mobileprovision'));
+  if(amapKey)fs.writeFileSync(path.join(app,'TIOAMapPrivate.json'),JSON.stringify({bundleIdentifier:amapKey.bundleIdentifier,apiKey:amapKey.apiKey})+'\n',{flag:'wx',mode:0o600});
   const nested=[];function walk(dir){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,entry.name);if(entry.isSymbolicLink())throw Error('symlink_requires_review');if(entry.isDirectory()){walk(p);if(entry.name.endsWith('.framework'))nested.push(p);}else if(entry.name.endsWith('.dylib'))nested.push(p);}}
   walk(path.join(app,'Frameworks'));
   for(const p of nested)run('codesign',['--force','--sign',o.identity,'--timestamp=none','--generate-entitlement-der',p]);
@@ -146,7 +165,7 @@ print(json.dumps({'entitlements':p['Entitlements'],'expires':p['ExpirationDate']
   run('/usr/bin/ditto',['-c','-k','--norsrc','--noextattr','--keepParent',path.join(destination,'Payload'),ipa]);fs.chmodSync(ipa,0o600);
   run('/usr/bin/unzip',['-tq',ipa]);
   const names=run('/usr/bin/unzip',['-Z1',ipa],{encoding:'utf8'}).split('\n');if(names.some(n=>n.split('/').some(x=>x==='__MACOSX'||x.startsWith('._'))))throw Error('unexpected_archive_metadata');
-  const report={status:'SIGNED_NOT_DEVICE_ACCEPTED',signatureVerified:true,officialSourceUploaded:false,privateBootstrapIncluded:false,experimentalOTA:!!otaPatch,flashAuthorized:false,ipaSHA256:createHash('sha256').update(fs.readFileSync(ipa)).digest('hex'),pushEntitled:!!entitlement['aps-environment'],appleSignInEntitled:!!entitlement['com.apple.developer.applesignin'],memorySync:memorySyncPackagingNotes()};
+  const report=packageReport({status:'SIGNED_NOT_DEVICE_ACCEPTED',signatureVerified:true,officialSourceUploaded:false,privateBootstrapIncluded:false,amapKeySeeded:!!amapKey,experimentalOTA:!!otaPatch,flashAuthorized:false,ipaSHA256:createHash('sha256').update(fs.readFileSync(ipa)).digest('hex'),pushEntitled:!!entitlement['aps-environment'],appleSignInEntitled:!!entitlement['com.apple.developer.applesignin'],memorySync:memorySyncPackagingNotes()},amapKey?.apiKey);
   fs.writeFileSync(path.join(destination,'report.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx',mode:0o600});console.log(JSON.stringify(report,null,2));
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){try{main();}catch(e){const known=/^[a-z_]+$/.test(e.message);console.error(known?e.message:'Local packaging failed. Check compatible source, profile and signing identity. No subprocess output or credentials are printed.');process.exitCode=1;}}

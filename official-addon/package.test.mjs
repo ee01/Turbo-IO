@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import {validateOptions,entitlementsFor,validateResearchPair,navigationBuildManifest,memorySyncPackagingNotes,MEMORY_SYNC_SESSION_ID} from './package.mjs';
+import os from 'node:os';
+import path from 'node:path';
+import {validateOptions,entitlementsFor,validateResearchPair,navigationBuildManifest,readPrivateAmapKey,packageReport,memorySyncPackagingNotes,MEMORY_SYNC_SESSION_ID} from './package.mjs';
 const o={app:'/example/Runner.app',addon:'/example/addon.dylib',profile:'/example/profile.mobileprovision',out:'/example/new-output',identity:'A'.repeat(40),device:'synthetic-device',bundle:'com.example.test'};
 test('memory sync packaging adds no background mode or entitlement',()=>{
   const notes=memorySyncPackagingNotes();
@@ -82,4 +84,22 @@ test('daily manifest records unavailable SDK and control contract honestly',()=>
  assert.equal(b.lifelogPolicy,'pause-restore');
  assert.equal(navigationBuildManifest('',Buffer.alloc(0),'a'.repeat(40),'b'.repeat(64)),null);
  assert.throws(()=>navigationBuildManifest('_TIODailyNavigationBuild',Buffer.alloc(0),'unknown','b'.repeat(64)));
+ assert.equal('apiKey' in b,false);
+});
+
+test('private AMap key file stays out of the package report',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'amap-key-'));
+ const file=path.join(dir,'amap-ios.local.json');
+ const secret='0123456789abcdef0123456789abcdef';
+ fs.writeFileSync(file,JSON.stringify({bundleIdentifier:'com.rayneo.venus.pub',apiKey:secret})+'\n',{mode:0o600});
+ assert.deepEqual(readPrivateAmapKey(file),{bundleIdentifier:'com.rayneo.venus.pub',apiKey:secret});
+ fs.chmodSync(file,0o644);assert.throws(()=>readPrivateAmapKey(file),/amap_key_file_private/);
+ fs.chmodSync(file,0o600);fs.writeFileSync(file,JSON.stringify({apiKey:'short',bundleIdentifier:'com.rayneo.venus.pub'}));
+ assert.throws(()=>readPrivateAmapKey(file),/amap_key_file_private/);
+ assert.throws(()=>readPrivateAmapKey('relative.json'),/amap_key_file_required/);
+ const report=packageReport({status:'SIGNED_NOT_DEVICE_ACCEPTED',amapKeySeeded:true},secret);
+ assert.equal(report.amapKeySeeded,true);assert.equal(JSON.stringify(report).includes(secret),false);
+ assert.throws(()=>packageReport({note:secret},secret),/amap_key_leaked_to_report/);
+ const ui=fs.readFileSync(new URL('../firmware-research/strix-1.0.4.12/native-navigation/phone/NavigationUI.m',import.meta.url),'utf8');
+ assert.match(ui,/BootstrapKey\(\)/);assert.doesNotMatch(ui,/apiKey"\s*:\s*"[0-9a-fA-F]{32}"/);
 });

@@ -61,11 +61,23 @@ manifest. Original/unknown firmware stays disabled. This deliberate gate must be
 replaced only alongside a verified bridge and its target-device evidence, not by
 changing a flag or filling in an arbitrary contract string.
 
-No authorized AMap SDK/Key configuration was available during this checkpoint.
-Both arm64 build checks used `TIO_AMAP_ENABLED=0`; the SDK-specific branch and
-actual GPS/search navigation remain uncompiled/unverified. These are development
-libraries, not a working phone-navigation IPA. There was no signing, installation,
-firmware transmission or device-state change.
+A user-supplied iOS key for `com.rayneo.venus.pub` is kept only in the local
+keychain and a mode-0600 gitignored file. Source, manifests, logs and this
+document do not contain it. Packaging accepts `--amap-key-file` and, on first
+navigation open, copies a bundle-matched `TIOAMapPrivate.json` into the phone
+keychain. The manifest still records no key.
+
+The pinned SDK did not install. Search 9.8.1 still matches
+`d11e0b418319c74abf5228611f678b58130eac791e267d6d6e3e7ec9f41b2007`. The official
+Navi ALL archive now hashes to
+`8264377eb68d414c046be96585957250cda15a7eabd16553842f53f98764f4b8` and contains
+Navi V11.3.100 plus Foundation V1.9.4_20260904. The required pin remains Navi
+11.2.100 / Foundation 1.9.1
+(`044d444f915dc2822003e14ad5d096ae00677ee1495efa64c0dd4c400a70e075`).
+`setup-amap.mjs` stopped. This checkpoint did not retarget the SDK, so no
+AMap-enabled library was linked. Earlier arm64 checks remain `TIO_AMAP_ENABLED=0`.
+These are development libraries, not a working phone-navigation IPA. There was
+no signing, installation, firmware transmission or device-state change.
 
 ## Reproduction
 
@@ -84,9 +96,10 @@ node --test official-addon/package.test.mjs
 uv run --project memory-sync-service --group dev pytest memory-sync-service/tests -q
 ```
 
-A navigation build with AMap additionally needs legitimately available pinned SDK
-archives and a valid iOS Key configured privately. Follow `setup-amap.mjs` terms
-and hash checks; this checkpoint did not accept terms on the user's behalf.
+A navigation build with AMap still needs the pinned Navi 11.2.100 and Foundation
+1.9.1 archives. The current official Navi ALL URL no longer matches that pin;
+do not substitute V11.3.100 / V1.9.4 without a separate compatibility review.
+The iOS key stays in the private local file and is passed only as `--amap-key-file`.
 
 The tool packaging option is `--experimental-ota TLC1 --firmware /absolute/exact.zip`;
 it uses the TLC1 `ios-reference` implementation, its exact gate and historical

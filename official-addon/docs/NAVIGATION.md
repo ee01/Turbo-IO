@@ -77,7 +77,7 @@ xcrun devicectl device install app --device YOUR_DEVICE_ID \
 1. 在高德控制台创建 **iOS平台Key**，绑定实际应用 Bundle ID；本适配目标为 `com.rayneo.venus.pub`。Web服务Key/TinyFish Key不能替代iOS Key。
 2. 根据自己账号开通所需地图、搜索及导航服务；服务权限/额度由高德管理。
 3. App内进入 **TurboIO → 资料 → 步行 / 骑行 / 驾车导航 → 右上角更多 → 高德 Key 设置**，粘贴自己的Key。
-4. Key只存本机钥匙串，不回显旧值。公开版没有维护者Key或从私用包自动导入Key的逻辑。要换Key时先重启App，在初始化地图前修改。
+4. Key只存本机钥匙串，不回显旧值。源码、打包清单和日志都不写入Key。安装包里若有与当前 Bundle ID 匹配的 `TIOAMapPrivate.json`，首次打开导航页且钥匙串为空时会写入钥匙串；公开仓库不提供该文件。要换Key时先重启App，在初始化地图前修改。
 5. 点击“开启地图”并阅读隐私说明后决定是否同意。拒绝时不初始化地图SDK。主动点“我的位置”或实时导航才请求定位；模拟不必使用真实位置。
 
 ## 5. 第一次运行建议用模拟
