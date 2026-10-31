@@ -68,6 +68,6 @@ int main(void) { @autoreleasepool {
     assert([a recordText:@"下一句" round:@"round2" role:@"0" at:NSDate.date error:&err]);
     NSArray *files=[a exportAt:NSDate.date error:&err]; assert(files.count==2);
     NSArray *rows=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:files[1]] options:0 error:&err];
-    assert(rows.count==2 && [rows[0][@"text"] isEqual:@"最终修正"] && !rows[0][@"id"]);
+    assert(rows.count==2 && [rows[0][@"text"] isEqual:@"最终修正"] && [rows[0][@"id"] isEqual:@"round1|0"] && [rows[0][@"revision"] integerValue]==2);
     NSLog(@"PASS: exact chat routing, endpoint guards, SSE UTF-8 chunk boundaries, finality/error, archive merge and export. Synthetic data only.");
 } return 0; }

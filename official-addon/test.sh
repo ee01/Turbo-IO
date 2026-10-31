@@ -2,6 +2,20 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 mkdir -p build
+for profile in TIO_DAILY_NAVIGATION TIO_TLC1_UPGRADE; do
+  task_ota_flag=0
+  if [[ "$profile" == TIO_TLC1_UPGRADE ]]; then task_ota_flag=1; fi
+  xcrun clang -fobjc-arc -fmodules -Wall -Wextra -D"$profile"=1 -DTIO_OTA_RESEARCH_ENABLED="$task_ota_flag" -framework Foundation ResearchCatalog.m navigation/BuildProfileTests.m -o "build/$profile-tests"
+  "./build/$profile-tests"
+done
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation navigation/NavigationFreshness.m navigation/NavigationFreshnessTests.m -o build/navigation-freshness-tests
+./build/navigation-freshness-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -I . -framework Foundation navigation/NavigationCompatibility.m navigation/NavigationCompatibilityTests.m -o build/navigation-compatibility-tests
+./build/navigation-compatibility-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation navigation/NavigationLifeLogCoordinator.m navigation/NavigationLifeLogTests.m -o build/navigation-lifelog-tests
+./build/navigation-lifelog-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation navigation/NavigationVoiceIntent.m navigation/NavigationVoiceTests.m -o build/navigation-voice-tests
+./build/navigation-voice-tests
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -framework Foundation NavigationBackgroundTests.m -o build/navigation-background-tests
 ./build/navigation-background-tests
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation HostCompatibilityTests.m -o build/host-compatibility-tests
@@ -11,7 +25,7 @@ xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation NavigationM
 ./build/navigation-modes-tests
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation Profile.m ProfileTests.m -o build/profile-tests
 ./build/profile-tests
-xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types -framework Foundation Core.m Profile.m WebSearch.m KnowledgeToolFlowTests.m -o build/knowledge-tool-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types -framework Foundation memory-sync/MemorySyncProtocol.m memory-sync/MemorySyncStore.m -lsqlite3 Core.m Profile.m WebSearch.m KnowledgeToolFlowTests.m -o build/knowledge-tool-tests
 ./build/knowledge-tool-tests
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation HomeTabLayout.m HomeTabLayoutTests.m -o build/home-tab-layout-tests
 ./build/home-tab-layout-tests
@@ -21,9 +35,9 @@ xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation VoiceTTSCor
 ./build/voice-tts-tests
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -framework Foundation NewsPresentation.m NewsPresentationTests.m -o build/news-presentation-tests
 ./build/news-presentation-tests
-xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types -framework Foundation Core.m Profile.m Tests.m -o build/core-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types -framework Foundation memory-sync/MemorySyncProtocol.m memory-sync/MemorySyncStore.m -lsqlite3 Core.m Profile.m Tests.m -o build/core-tests
 ./build/core-tests
-xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -framework Foundation Core.m Profile.m PrivateBootstrap.m PrivateBootstrapTests.m -o build/private-bootstrap-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -framework Foundation memory-sync/MemorySyncProtocol.m memory-sync/MemorySyncStore.m -lsqlite3 Core.m Profile.m PrivateBootstrap.m PrivateBootstrapTests.m -o build/private-bootstrap-tests
 ./build/private-bootstrap-tests
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-incompatible-pointer-types -framework Foundation TodoProtocol.m TodoProtocolTests.m -o build/todo-protocol-tests
 ./build/todo-protocol-tests
@@ -37,11 +51,11 @@ xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-incompatible-pointer-types -
 ./build/alwayson-ogg-tests
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types -framework Foundation WebSearch.m WebSearchTests.m -o build/web-search-tests
 ./build/web-search-tests
-xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types -framework Foundation Core.m Profile.m WebSearch.m WebSearchFlowTests.m -o build/web-search-flow-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types -framework Foundation memory-sync/MemorySyncProtocol.m memory-sync/MemorySyncStore.m -lsqlite3 Core.m Profile.m WebSearch.m WebSearchFlowTests.m -o build/web-search-flow-tests
 ./build/web-search-flow-tests
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types -framework Foundation TodoBridgeClient.m TodoBridgeClientTests.m -o build/todo-bridge-client-tests
 ./build/todo-bridge-client-tests
-xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types -framework Foundation Core.m Profile.m WebSearch.m TodoToolFlowTests.m -o build/todo-tool-flow-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types -framework Foundation memory-sync/MemorySyncProtocol.m memory-sync/MemorySyncStore.m -lsqlite3 Core.m Profile.m WebSearch.m TodoToolFlowTests.m -o build/todo-tool-flow-tests
 ./build/todo-tool-flow-tests
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -framework Foundation NewsCore.m NewsCoreTests.m -o build/news-core-tests
 ./build/news-core-tests
@@ -66,3 +80,7 @@ xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -Wno-incomp
 ./build/navigation-tele-tests
 xcrun clang -fobjc-arc -fmodules -Wno-incompatible-pointer-types -framework Foundation A2UIProtocol.m A2UIProtocolTests.m -o build/a2ui-protocol-tests
 ./build/a2ui-protocol-tests
+xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter -framework Foundation -framework Security -lsqlite3 \
+  memory-sync/MemorySyncProtocol.m memory-sync/MemorySyncStore.m memory-sync/MemorySyncSecrets.m memory-sync/MemoryUploadCoordinator.m memory-sync/MemorySyncLifecycle.m memory-sync/MemorySyncRuntime.m memory-sync/MemorySyncTests.m \
+  -o build/memory-sync-tests
+./build/memory-sync-tests

@@ -12,6 +12,25 @@ case "$mode" in
   embedded) output=build/embedded/TurboIOPrivateAddon.dylib; install_name=@rpath/TurboIOPrivateAddon.dylib; mkdir -p build/embedded ;;
   *) echo 'Usage: build.sh [jailbreak|embedded] [target.bundle.id]' >&2; exit 2 ;;
 esac
+# Explicit daily/tool profiles cannot inherit experimental options from a shell.
+profile=${TIO_BUILD_PROFILE:-legacy}
+profile_options=()
+profile_sources=()
+case "$profile" in
+  legacy) ;;
+  daily-navigation)
+    [[ "$mode" == embedded && "$bundle" == com.rayneo.venus.pub && ${TIO_OTA_RESEARCH_ENABLED:-0} == 0 && ${TIO_MUSIC:-0} == 0 && ${TIO_LOCAL_TRANSLATION:-0} == 0 ]] || { echo 'Daily navigation rejects OTA/music/translation profiles' >&2; exit 2; }
+    export TIO_NATIVE_NAV=1
+    profile_options=(-DTIO_DAILY_NAVIGATION=1 -I "$PWD/navigation")
+    profile_sources=(navigation/NavigationFreshness.m navigation/NavigationCompatibility.m navigation/NavigationLifeLogCoordinator.m navigation/NavigationVoiceIntent.m)
+    ;;
+  tlc1-upgrade)
+    [[ "$mode" == embedded && "$bundle" == com.rayneo.venus.pub && ${TIO_NATIVE_NAV:-0} == 0 && ${TIO_AMAP_ENABLED:-0} == 0 && ${TIO_MUSIC:-0} == 0 && ${TIO_LOCAL_TRANSLATION:-0} == 0 ]] || { echo 'TLC1 tool rejects navigation/SDK/music/translation profiles' >&2; exit 2; }
+    export TIO_OTA_RESEARCH_ENABLED=1
+    profile_options=(-DTIO_TLC1_UPGRADE=1)
+    ;;
+  *) echo 'Unknown TIO_BUILD_PROFILE' >&2; exit 2 ;;
+esac
 nav_options=()
 if [[ ${TIO_AMAP_ENABLED:-0} == 1 ]]; then
   [[ "$mode" == embedded ]] || { echo 'Navigation requires embedded mode' >&2; exit 2; }
@@ -35,7 +54,7 @@ if [[ ${TIO_MUSIC:-0} == 1 ]]; then
   for unit in MusicAPI.m MusicTransport.m MusicBridge.m MusicPlayer.m MusicUI.m music.c; do music_sources+=("music/$unit"); done
 fi
 if [[ ${TIO_NATIVE_NAV:-0} == 1 ]]; then
-  [[ ${TIO_OTA_RESEARCH_ENABLED:-0} == 1 && "$mode" == embedded ]] || { echo 'TNV1 requires explicit TIO_OTA_RESEARCH_ENABLED=1 and embedded mode' >&2; exit 2; }
+  [[ ( ${TIO_OTA_RESEARCH_ENABLED:-0} == 1 || "$profile" == daily-navigation ) && "$mode" == embedded ]] || { echo 'TNV1 requires explicit TIO_OTA_RESEARCH_ENABLED=1 and embedded mode' >&2; exit 2; }
   ota_root=../firmware-research/strix-1.0.4.12/native-navigation/phone
   if [[ ${TIO_MUSIC:-0} == 1 ]]; then ota_root=../firmware-research/strix-1.0.4.12/native-navigation/music/phone; fi
   navigation_ui="$ota_root/NavigationUI.m"
@@ -47,6 +66,7 @@ fi
 if [[ ${TIO_OTA_RESEARCH_ENABLED:-0} == 1 ]]; then
   [[ "$mode" == embedded && "$bundle" == com.rayneo.venus.pub ]] || { echo 'Firmware research requires embedded original bundle; see firmware safety documentation' >&2; exit 2; }
   ota_root=${ota_root:-../firmware-research/strix-1.0.4.12/ios-reference}
+  if [[ "$profile" == tlc1-upgrade ]]; then ota_root=../firmware-research/strix-1.0.4.12/lifelog-coexist/ios-reference; fi
   ota_options=(-DTIO_OTA_RESEARCH_ENABLED=1 -DTIO_OTA_FLASH_ENABLED=1 -DTIO_OTA_FEED_ARMING_ENABLED=1 -I "$ota_root" -I "$PWD")
   ota_sources=("$ota_root/ExperimentalOTA.m" "$ota_root/ExperimentalOTAGuard.m" "$ota_root/ExperimentalOTAFlash.m" "$ota_root/ExperimentalOTAFeed.m" "$ota_root/ExperimentalOTAUI.m")
   output=build/ota-research/TurboIOPrivateAddon.dylib; mkdir -p build/ota-research
@@ -55,6 +75,8 @@ if [[ ${TIO_NATIVE_NAV:-0} == 1 ]]; then
   output=build/native-navigation/TurboIOPrivateAddon.dylib; mkdir -p build/native-navigation
 fi
 if [[ ${TIO_MUSIC:-0} == 1 ]]; then output=build/music/TurboIOPrivateAddon.dylib; mkdir -p build/music; fi
+if [[ "$profile" == daily-navigation ]]; then output=build/daily-navigation/TurboIOPrivateAddon.dylib; mkdir -p build/daily-navigation; fi
+if [[ "$profile" == tlc1-upgrade ]]; then output=build/tlc1-upgrade/TurboIOPrivateAddon.dylib; mkdir -p build/tlc1-upgrade; fi
 sdk_path=$(xcrun --sdk iphoneos --show-sdk-path)
 caption_options=()
 caption_sources=()
@@ -76,7 +98,8 @@ if [[ ${TIO_CLASSIC_BINDINGS:-1} == 1 ]]; then
 fi
 xcrun --sdk iphoneos clang -arch arm64 -isysroot "$sdk_path" -miphoneos-version-min=16.0 \
   -fobjc-arc -fmodules -dynamiclib -Wall -Wextra -Wno-unused-parameter -Wno-incompatible-pointer-types \
-  -framework Foundation -framework UIKit -framework Security -framework UniformTypeIdentifiers -framework CoreLocation -framework AVFAudio \
+  -framework Foundation -framework UIKit -framework Security -framework UniformTypeIdentifiers -framework CoreLocation -framework AVFAudio -lsqlite3 \
+  BuildProfile.m ${profile_options[@]+"${profile_options[@]}"} ${profile_sources[@]+"${profile_sources[@]}"} \
   ${nav_options[@]+"${nav_options[@]}"} \
   ${ota_options[@]+"${ota_options[@]}"} ${ota_sources[@]+"${ota_sources[@]}"} \
   ${native_options[@]+"${native_options[@]}"} ${native_sources[@]+"${native_sources[@]}"} \
@@ -84,7 +107,7 @@ xcrun --sdk iphoneos clang -arch arm64 -isysroot "$sdk_path" -miphoneos-version-
   ${caption_options[@]+"${caption_options[@]}"} ${caption_sources[@]+"${caption_sources[@]}"} \
   NavigationModes.m ProtocolContext.m NavigationSubtitleHUD.m NavigationPlaces.m NavigationPlacePicker.m A2UIProtocol.m NavigationCore.m NavigationTeleHUD.m NavigationTransport.m "$navigation_ui" ManualHUD.m "$subtitle_core" "$subtitle_runtime" \
   "-DTIO_TARGET_BUNDLE_ID=\"$bundle\"" -install_name "$install_name" "${link_options[@]}" \
-  Core.m Profile.m KnowledgeClient.m KnowledgeUI.m ProfileUI.m HomeTabLayout.m HomeTabBridge.m ResearchCatalog.m ResearchUI.m NewsPresentation.m PrivateBootstrap.m VoiceTTSCore.m VoiceTTS.m WebSearch.m TodoProtocol.m TodoRuntime.m NewsCore.m NewsReader.m NewsTeleprompter.m RecordingExports.m RecordingExportsUI.m RecordingExportsMenu.m RecordingText.m RecordingTextUI.m RecordingTextMenu.m AlwaysOnAudioFiles.m AlwaysOnOgg.m AlwaysOnAudioNative.m AlwaysOnAudioUI.m Addon.m -o "$output"
+  Core.m Profile.m KnowledgeClient.m KnowledgeUI.m ProfileUI.m HomeTabLayout.m HomeTabBridge.m ResearchCatalog.m ResearchUI.m NewsPresentation.m PrivateBootstrap.m VoiceTTSCore.m VoiceTTS.m WebSearch.m TodoProtocol.m TodoRuntime.m NewsCore.m NewsReader.m NewsTeleprompter.m RecordingExports.m RecordingExportsUI.m RecordingExportsMenu.m RecordingText.m RecordingTextUI.m RecordingTextMenu.m AlwaysOnAudioFiles.m AlwaysOnOgg.m AlwaysOnAudioNative.m AlwaysOnAudioUI.m memory-sync/MemorySyncProtocol.m memory-sync/MemorySyncStore.m memory-sync/MemorySyncSecrets.m memory-sync/MemoryUploadCoordinator.m memory-sync/MemorySyncLifecycle.m memory-sync/MemorySyncRuntime.m Addon.m -o "$output"
 codesign --force --sign - "$output"
 plutil -lint TurboIOPrivateAddon.plist
 shasum -a 256 "$output"

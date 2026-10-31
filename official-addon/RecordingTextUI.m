@@ -4,6 +4,7 @@
 #import <objc/runtime.h>
 #import "RecordingText.h"
 #import "ResearchUI.h"
+#import "memory-sync/MemorySyncStore.h"
 
 static NSString *const TextDomain=@"io.turboio.official-private-addon";
 static NSUserDefaults *TextPrefs(void){return [[NSUserDefaults alloc]initWithSuiteName:TextDomain];}
@@ -104,11 +105,27 @@ static void ShareText(UIViewController *vc,NSURL *file){if(!file){TextAlert(vc,@
 @end
 
 // Reads only the extension-owned final-text archive, never the official Isar/Hive store.
-static NSString *CapturedLifelogText(void){
-    NSURL *url=[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon/final-transcripts.json"]];NSNumber *size=nil,*link=nil;[url getResourceValue:&size forKey:NSURLFileSizeKey error:nil];[url getResourceValue:&link forKey:NSURLIsSymbolicLinkKey error:nil];if(link.boolValue||!size||size.unsignedLongLongValue>32*1024*1024)return nil;
-    id rows=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url]?:NSData.data options:0 error:nil];if(![rows isKindOfClass:NSArray.class]||![rows count]||[rows count]>20000)return nil;
+static NSString *LifelogMarkdown(NSArray *rows,BOOL keyed){
+    if(![rows isKindOfClass:NSArray.class]||!rows.count||rows.count>20000)return nil;
     NSMutableString *text=[NSMutableString stringWithString:@"# 全天智记已保存文字\n\n仅含启用扩展保存后收到的最终文字，不是完整历史或原音频。时间为手机接收时间。\n\n"];
-    for(id r in rows){if(![r isKindOfClass:NSDictionary.class]||![r[@"text"] isKindOfClass:NSString.class]||![r[@"at"] isKindOfClass:NSString.class])return nil;[text appendFormat:@"## %@\n\n%@\n\n",r[@"at"],r[@"text"]];}return text;
+    for(id r in rows){
+        if(![r isKindOfClass:NSDictionary.class])return nil;
+        NSString *at=r[@"at"],*body=r[@"text"];
+        if(![at isKindOfClass:NSString.class]||![body isKindOfClass:NSString.class])return nil;
+        if(keyed&&[r[@"id"] isKindOfClass:NSString.class])[text appendFormat:@"## %@ · %@ · rev %@\n\n%@\n\n",at,r[@"id"],r[@"revision"]?:@1,body];
+        else [text appendFormat:@"## %@\n\n%@\n\n",at,body];
+    }
+    return text;
+}
+static NSString *LegacyLifelogJSON(void){
+    NSURL *url=[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon/final-transcripts.json"]];NSNumber *size=nil,*link=nil;[url getResourceValue:&size forKey:NSURLFileSizeKey error:nil];[url getResourceValue:&link forKey:NSURLIsSymbolicLinkKey error:nil];if(link.boolValue||!size||size.unsignedLongLongValue>32*1024*1024)return nil;
+    id rows=[NSJSONSerialization JSONObjectWithData:[NSData dataWithContentsOfURL:url]?:NSData.data options:0 error:nil];return LifelogMarkdown(rows,NO);
+}
+static NSString *CapturedLifelogText(void){
+    NSURL *dir=[NSURL fileURLWithPath:[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon"] isDirectory:YES];
+    NSError *error=nil;TIOMemorySyncStore *store=[[TIOMemorySyncStore alloc]initWithDirectory:dir error:&error];
+    NSArray *rows=store?[store snapshot:&error]:nil;NSString *text=rows.count?LifelogMarkdown(rows,YES):nil;
+    return text?:LegacyLifelogJSON();
 }
 @interface TIOLifelogExportsPanel:UITableViewController
 @end

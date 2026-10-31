@@ -1,4 +1,7 @@
 #import "NavigationUI.h"
+#if TIO_DAILY_NAVIGATION
+#import "NavigationCompatibility.h"
+#endif
 #import "NavigationCore.h"
 #import "NavigationModes.h"
 #import "NavigationTransport.h"
@@ -28,6 +31,7 @@ static NSDictionary *KeyQuery(void){return @{(__bridge id)kSecClass:(__bridge id
 static NSString *ReadNavKey(void){NSMutableDictionary *q=[KeyQuery() mutableCopy];q[(__bridge id)kSecReturnData]=@YES;CFTypeRef v=NULL;if(SecItemCopyMatching((__bridge CFDictionaryRef)q,&v)!=errSecSuccess)return nil;return [[NSString alloc]initWithData:CFBridgingRelease(v) encoding:NSUTF8StringEncoding];}
 static BOOL ValidKey(NSString *s){return [s isKindOfClass:NSString.class]&&s.length==32&&[s rangeOfCharacterFromSet:[NSCharacterSet characterSetWithCharactersInString:@"0123456789abcdefABCDEF"].invertedSet].location==NSNotFound;}
 static BOOL WriteNavKey(NSString *s){if(!ValidKey(s))return NO;NSDictionary *a=@{(__bridge id)kSecValueData:[s dataUsingEncoding:NSUTF8StringEncoding],(__bridge id)kSecAttrAccessible:(__bridge id)kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly};OSStatus r=SecItemUpdate((__bridge CFDictionaryRef)KeyQuery(),(__bridge CFDictionaryRef)a);if(r==errSecItemNotFound){NSMutableDictionary *q=[KeyQuery() mutableCopy];[q addEntriesFromDictionary:a];r=SecItemAdd((__bridge CFDictionaryRef)q,NULL);}return r==errSecSuccess;}
+static void BootstrapKey(void){if(ReadNavKey().length)return;NSString *p=[NSBundle.mainBundle pathForResource:@"TIOAMapPrivate" ofType:@"json"];NSData *d=[NSData dataWithContentsOfFile:p?:@""];if(!d||d.length>4096)return;id j=[NSJSONSerialization JSONObjectWithData:d options:0 error:nil];if([j isKindOfClass:NSDictionary.class]&&[j[@"bundleIdentifier"] isEqual:NSBundle.mainBundle.bundleIdentifier])WriteNavKey(j[@"apiKey"]);}
 
 @interface TIONavigationPanel:UIViewController<CLLocationManagerDelegate
 #if TIO_AMAP_ENABLED
@@ -65,6 +69,7 @@ static BOOL WriteNavKey(NSString *s){if(!ValidKey(s))return NO;NSDictionary *a=@
 @property UISegmentedControl *transportMode;
 @property NSInteger selectedTransport,sessionTransport;
 @property BOOL routeReady,locating;
+@property BOOL nativeAutoStartPending;
 @property BOOL navigationStarted,backgroundLocationEnabled;
 @property UIBackgroundTaskIdentifier navigationBackgroundTask;
 @property NSUInteger backgroundEpoch;
@@ -96,6 +101,7 @@ static BOOL WriteNavKey(NSString *s){if(!ValidKey(s))return NO;NSDictionary *a=@
 - (void)viewDidLoad{
     [super viewDidLoad];self.title=@"多模式导航 · 后台连接";self.view.backgroundColor=UIColor.systemGroupedBackgroundColor;self.note=@"字幕直传：先获取预览/退出格式，再启动高德模拟，确认眼镜空闲后开启。模拟可短时退后台；实时导航在授权后可后台运行。请勿边驾驶边调试。";self.teleHUD=[TIONavTeleHUD new];self.subtitleHUD=[TIONavSubtitleHUD new];
 #ifndef TIO_UI_PREVIEW
+    BootstrapKey();
 #endif
     self.scroll=[UIScrollView new];self.scroll.translatesAutoresizingMaskIntoConstraints=NO;[self.view addSubview:self.scroll];
     self.stack=[UIStackView new];self.stack.axis=UILayoutConstraintAxisVertical;self.stack.spacing=12;self.stack.translatesAutoresizingMaskIntoConstraints=NO;[self.scroll addSubview:self.stack];
@@ -126,9 +132,10 @@ static BOOL WriteNavKey(NSString *s){if(!ValidKey(s))return NO;NSDictionary *a=@
 #if TIO_DISPLAY_PHONE
     if(![frame[@"phase"] isEqual:@"navigating"]||![frame[@"segment"] isEqual:self.display[@"segment"]])self.crossPixels=nil;
 #endif
+    if(![frame[@"phase"] isEqual:@"navigating"])self.nativeAutoStartPending=NO;
     self.display=frame;TIONavOfferDisplay(frame);[self.teleHUD offer:frame at:NSProcessInfo.processInfo.systemUptime];[self.subtitleHUD offer:frame at:NSProcessInfo.processInfo.systemUptime];
 #if TIO_DISPLAY_PHONE
-    TDPPhoneNavigationOffer([self displayHUDFrame]);[self refreshDisplayHUD];
+    [self attemptAutomaticDisplayHUD];TDPPhoneNavigationOffer([self displayHUDFrame]);[self refreshDisplayHUD];
 #endif
     [self refresh];}
 - (void)tick{
@@ -181,7 +188,7 @@ static BOOL WriteNavKey(NSString *s){if(!ValidKey(s))return NO;NSDictionary *a=@
 - (void)halt{
     self.navigationStarted=NO;self.backgroundLocationEnabled=NO;[self endNavigationBackgroundTask];
 #if TIO_DISPLAY_PHONE
-    TDPPhoneNavigationStop();self.hudIconPixels=nil;self.hudIconType=0;self.crossPixels=nil;
+    self.nativeAutoStartPending=NO;TDPPhoneNavigationStop();self.hudIconPixels=nil;self.hudIconType=0;self.crossPixels=nil;
 #endif
     [self.subtitleHUD stop:@"导航停止／切换路线"];
     [self.teleHUD stop:@"导航停止／切换路线"];

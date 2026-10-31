@@ -9,6 +9,10 @@ import {amapResources,copyAMapResources} from './amap-resources.mjs';
 import {validateTranslationPair,prepareTranslationResources,copyTranslationResources} from './local-translation/package-resources.mjs';
 import {patch as patchExperimentalOTA} from '../firmware-research/strix-1.0.4.12/src/patch-ios105-ota-source.mjs';
 const here=path.dirname(fileURLToPath(import.meta.url));
+export const MEMORY_SYNC_SESSION_ID='io.turboio.memory.sync.upload';
+export function memorySyncPackagingNotes() {
+  return {sessionIdentifier:MEMORY_SYNC_SESSION_ID,backgroundModesAdded:false,entitlementsAdded:false};
+}
 export function validateOptions(o) {
   for(const k of ['app','addon','profile','out'])if(typeof o[k]!=='string'||!path.isAbsolute(o[k]))throw Error('absolute_paths_required');
   if(!o.app.endsWith('.app')||o.out.endsWith('.app'))throw Error('use_app_input_and_new_output_directory');
@@ -16,11 +20,19 @@ export function validateOptions(o) {
   if(!/^[A-Za-z0-9][A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$/.test(o.bundle||''))throw Error('invalid_bundle');
   if(o.product&&!/^iPhone\d+,\d+$/.test(o.product))throw Error('invalid_explicit_product');
   if(fs.existsSync(o.out))throw Error('output_must_not_exist');
-  if(o['experimental-ota']!==undefined&&(!['R3','TNV1','TMU1','TFP1'].includes(o['experimental-ota'])||o.bundle!=='com.rayneo.venus.pub'))throw Error('invalid_experimental_ota_target');
-  if(['TNV1','TMU1','TFP1'].includes(o['experimental-ota']) && (typeof o.firmware!=='string'||!path.isAbsolute(o.firmware)))throw Error('research_requires_explicit_firmware');
-  if(o.firmware && !['TNV1','TMU1','TFP1'].includes(o['experimental-ota']))throw Error('unexpected_firmware');
+  if(o['experimental-ota']!==undefined&&(!['R3','TNV1','TMU1','TFP1','TLC1'].includes(o['experimental-ota'])||o.bundle!=='com.rayneo.venus.pub'))throw Error('invalid_experimental_ota_target');
+  if(['TNV1','TMU1','TFP1','TLC1'].includes(o['experimental-ota']) && (typeof o.firmware!=='string'||!path.isAbsolute(o.firmware)))throw Error('research_requires_explicit_firmware');
+  if(o.firmware && !['TNV1','TMU1','TFP1','TLC1'].includes(o['experimental-ota']))throw Error('unexpected_firmware');
 }
 export function validateResearchPair(symbols, kind, firmware) {
+  const daily=symbols.includes('_TIODailyNavigationBuild');
+  const tool=symbols.includes('_TIOTLC1UpgradeBuild');
+  if(daily){
+    if(kind||firmware||tool||!symbols.includes('_TNVStart')||symbols.includes('_TIOOTAFlashBuild')||symbols.includes('_TMMusicConsume')||symbols.includes('_TFFocusConsume'))throw Error('daily_navigation_profile_mismatch');
+    return;
+  }
+  if(tool!==(kind==='TLC1'))throw Error('tlc1_tool_profile_mismatch');
+  if(kind==='TLC1' && (!symbols.includes('_TIOOTAFlashBuild')||!Buffer.isBuffer(firmware)||firmware.length!==9322471||createHash('sha256').update(firmware).digest('hex')!=='5e2b85acb9cd25e0b245838e665e39d291eae4aae640308f126718eb3185e519'))throw Error('tlc1_firmware_identity_mismatch');
   const native=symbols.includes('_TNVStart');
   const music=symbols.includes('_TMMusicConsume');
   const focus=symbols.includes('_TFFocusConsume');
@@ -30,6 +42,30 @@ export function validateResearchPair(symbols, kind, firmware) {
     createHash('sha256').update(firmware).digest('hex')!=='e2a76fdcf0d3d07d766a7329d2d93b32350cb8309b73fc9c73726498fafddecb'))throw Error('tnv1_firmware_identity_mismatch');
   if(kind==='TMU1' && (!Buffer.isBuffer(firmware)||firmware.length!==9468398||
     createHash('sha256').update(firmware).digest('hex')!=='307a0d41aa76b3ed91a8fcc07b09329d76d78a51584c9954c7896d64b1ad9a81'))throw Error('tmu1_firmware_identity_mismatch');
+}
+export function navigationBuildManifest(symbols,addon,sourceCommit,sourceDigest) {
+  if(!symbols.includes('_TIODailyNavigationBuild'))return null;
+  if(!/^[a-f0-9]{40}$/.test(sourceCommit)||!/^[a-f0-9]{64}$/.test(sourceDigest))throw Error('invalid_navigation_source_identity');
+  return {schemaVersion:1,profile:'daily-navigation',sourceCommit,sourceTreeSha256:sourceDigest,
+    addonSha256:createHash('sha256').update(addon).digest('hex'),addonHashScope:'input-before-signing',sourceIdentityScope:'packager-checkout-not-build-attestation',
+    sdkVersions:symbols.includes('OBJC_CLASS_$_AMapNaviWalkManager')?{navi:'11.2.100',foundation:'1.9.1',search:'9.8.1'}:null,
+    expectedFirmwareFamily:'TLC1',candidateZipSha256:'5e2b85acb9cd25e0b245838e665e39d291eae4aae640308f126718eb3185e519',
+    lifelogPolicy:'pause-restore',verifiedControlContractVersion:null,otaToolBuild:false,physicalVerified:false};
+}
+// Local packaging may seed the phone keychain. The value never enters the report.
+export function readPrivateAmapKey(file){
+  if(typeof file!=='string'||!path.isAbsolute(file))throw Error('amap_key_file_required');
+  const st=fs.lstatSync(file);
+  if(!st.isFile()||st.isSymbolicLink()||st.size<2||st.size>4096||(st.mode&0o077))throw Error('amap_key_file_private');
+  let parsed;try{parsed=JSON.parse(fs.readFileSync(file,'utf8'));}catch{throw Error('amap_key_file_private');}
+  const key=parsed?.apiKey,bundle=parsed?.bundleIdentifier;
+  if(typeof key!=='string'||typeof bundle!=='string'||!/^[0-9a-fA-F]{32}$/.test(key)||!/^[A-Za-z0-9][A-Za-z0-9.-]+\.[A-Za-z0-9.-]+$/.test(bundle)||Object.keys(parsed).some(k=>k!=='apiKey'&&k!=='bundleIdentifier'))throw Error('amap_key_file_private');
+  return {apiKey:key,bundleIdentifier:bundle};
+}
+export function packageReport(base,secret){
+  const report={...base};
+  if(secret&&JSON.stringify(report).includes(secret))throw Error('amap_key_leaked_to_report');
+  return report;
 }
 export function entitlementsFor(p,o) {
   if(!Array.isArray(p.certs)||!p.certs.includes(o.identity.toUpperCase())||!Array.isArray(p.devices)||!p.devices.includes(o.device)||!(Date.parse(p.expires)>Date.now()))throw Error('profile_identity_device_or_expiry_mismatch');
@@ -41,13 +77,16 @@ export function entitlementsFor(p,o) {
 }
 function run(program,args,options={}){return exec(program,args,{stdio:['pipe','pipe','pipe'],...options});}
 function main(){
+  if(process.argv.includes('--help'))console.log('Daily navigation: TIO_BUILD_PROFILE=daily-navigation, no --experimental-ota or firmware. Separate TLC1 tool: TIO_BUILD_PROFILE=tlc1-upgrade and --experimental-ota TLC1 --firmware /absolute/exact-TLC1.zip.');
   if(process.argv.includes('--help'))console.log('FOCUS-04 integrated edition: --experimental-ota TFP1 --firmware /absolute/exact-FOCUS04-release.zip; see focus-edition/README.md. Optional translation resources may be omitted for this edition.');
   if(process.argv.includes('--help'))console.log('Optional local translation: --translation-module-dir /absolute/module --translation-models /absolute/models (requires TIO_LOCAL_TRANSLATION=1 addon; see local-translation/README.md)');
-  if(process.argv.includes('--help')){console.log('node official-addon/package.mjs --app /absolute/Runner.app --addon /absolute/TurboIOPrivateAddon.dylib --profile /absolute/profile.mobileprovision --identity CERTIFICATE_SHA1 --device YOUR_DEVICE_ID --out /absolute/new-private-output [--bundle com.rayneo.venus.pub] [--product iPhone18,4] [--amap-sdk-root /absolute/build/amap-sdk] [--experimental-ota R3|TNV1|TMU1 --firmware /absolute/matching-firmware.zip (required for TNV1/TMU1; HIGH RISK)]');return;}
+  if(process.argv.includes('--help')){console.log('node official-addon/package.mjs --app /absolute/Runner.app --addon /absolute/TurboIOPrivateAddon.dylib --profile /absolute/profile.mobileprovision --identity CERTIFICATE_SHA1 --device YOUR_DEVICE_ID --out /absolute/new-private-output [--bundle com.rayneo.venus.pub] [--product iPhone18,4] [--amap-sdk-root /absolute/build/amap-sdk] [--amap-key-file /absolute/private-amap.json] [--experimental-ota R3|TNV1|TMU1 --firmware /absolute/matching-firmware.zip (required for TNV1/TMU1; HIGH RISK)]');return;}
   const o={bundle:'com.rayneo.venus.pub'};const args=process.argv.slice(2);
   if(args.length%2)throw Error('expected_named_arguments');
-  const seen=new Set();for(let i=0;i<args.length;i+=2){const k=args[i].slice(2);if(!args[i].startsWith('--')||!['app','addon','profile','identity','device','out','bundle','product','amap-sdk-root','experimental-ota','firmware','translation-module-dir','translation-models'].includes(k)||seen.has(k))throw Error('unknown_or_duplicate_argument');seen.add(k);o[k]=args[i+1];}
+  const seen=new Set();for(let i=0;i<args.length;i+=2){const k=args[i].slice(2);if(!args[i].startsWith('--')||!['app','addon','profile','identity','device','out','bundle','product','amap-sdk-root','experimental-ota','firmware','translation-module-dir','translation-models','amap-key-file'].includes(k)||seen.has(k))throw Error('unknown_or_duplicate_argument');seen.add(k);o[k]=args[i+1];}
   validateOptions(o);
+  const amapKey=o['amap-key-file']?readPrivateAmapKey(o['amap-key-file']):null;
+  if(amapKey&&amapKey.bundleIdentifier!==o.bundle)throw Error('amap_key_bundle_mismatch');
   const mapResources=o['amap-sdk-root']?amapResources(o['amap-sdk-root']):[];
   const symbols=run('/usr/bin/nm',['-g',o.addon],{encoding:'utf8',maxBuffer:64*1024*1024});
   // FOCUS has a dynamic optional entry even without the translation module.
@@ -55,6 +94,7 @@ function main(){
   validateTranslationPair(focusEdition&&!o['translation-module-dir']&&!o['translation-models']?symbols.replaceAll('_TIOOpenLocalTranslation',''):symbols,o);
   const translationResources=prepareTranslationResources(o);
   if(symbols.includes('OBJC_CLASS_$_AMapNaviWalkManager')&&!mapResources.length)throw Error('amap_resources_option_required');
+  if(amapKey&&!symbols.includes('OBJC_CLASS_$_AMapNaviWalkManager'))throw Error('amap_key_without_sdk');
   const source=fs.realpathSync(o.app),destination=path.resolve(o.out);
   const researchAddon=symbols.includes('_TIOOTAFlashBuild');
   if(researchAddon!==Boolean(o['experimental-ota']))throw Error('research_addon_and_explicit_option_must_match');
@@ -78,6 +118,14 @@ print(json.dumps({'entitlements':p['Entitlements'],'expires':p['ExpirationDate']
   if(focusEdition){
     fs.cpSync(path.join(here,'focus-edition/TurboIOArt'),path.join(app,'TurboIOArt'),{recursive:true,errorOnExist:true,force:false});
   }
+  if(symbols.includes('_TIODailyNavigationBuild')){
+    const repoRoot=run('git',['-C',here,'rev-parse','--show-toplevel'],{encoding:'utf8'}).trim();
+    const revision=run('git',['-C',repoRoot,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
+    const files=run('git',['-C',repoRoot,'ls-files','-co','--exclude-standard','-z'],{encoding:'utf8'}).split('\0').filter(Boolean).sort();
+    const digest=createHash('sha256');for(const file of files){const name=path.join(repoRoot,file);if(fs.statSync(name).isFile()){digest.update(file);digest.update('\0');digest.update(fs.readFileSync(name));}}
+    const manifest=navigationBuildManifest(symbols,fs.readFileSync(o.addon),revision,digest.digest('hex'));
+    fs.writeFileSync(path.join(app,'TurboIONavigationBuild.json'),JSON.stringify(manifest,null,2)+'\n',{flag:'wx'});
+  }
   copyTranslationResources(translationResources,app);
   if(translationResources){
     const plist=path.join(app,'Info.plist');
@@ -88,9 +136,9 @@ print(json.dumps({'entitlements':p['Entitlements'],'expires':p['ExpirationDate']
     fs.writeFileSync(path.join(app,'Frameworks/App.framework/App'),otaPatch.output);
     const plist=path.join(app,'Info.plist');
     const music=['TMU1','TFP1'].includes(o['experimental-ota']);
-    run('plutil',['-insert','TIOExperimentalOTAQueryRouting','-string',focusEdition?'ios105-tfp1-loopback-flash-gated':music?'ios105-tmu1-loopback-flash-gated':o['experimental-ota']==='TNV1'?'ios105-tnv1-loopback-flash-gated':'ios105-r3-loopback-flash-gated',plist]);
-    run('plutil',['-insert','TIOExperimentalOTABuild','-string',focusEdition?'FOCUS-04-SOURCE':music?'TMU1-SOURCE-01':o['experimental-ota']==='TNV1'?'TNV1-SOURCE-01':'R3-SOURCE-RESEARCH-01',plist]);
-    if(firmware)fs.writeFileSync(path.join(app,focusEdition?'TurboWeReadCandidate.zip':music?'TurboMusicCandidate.zip':'TurboNavigationCandidate.zip'),firmware,{flag:'wx'});
+    run('plutil',['-insert','TIOExperimentalOTAQueryRouting','-string',o['experimental-ota']==='TLC1'?'ios105-tlc1-loopback-flash-gated':focusEdition?'ios105-tfp1-loopback-flash-gated':music?'ios105-tmu1-loopback-flash-gated':o['experimental-ota']==='TNV1'?'ios105-tnv1-loopback-flash-gated':'ios105-r3-loopback-flash-gated',plist]);
+    run('plutil',['-insert','TIOExperimentalOTABuild','-string',o['experimental-ota']==='TLC1'?'TLC1-TOOL-01':focusEdition?'FOCUS-04-SOURCE':music?'TMU1-SOURCE-01':o['experimental-ota']==='TNV1'?'TNV1-SOURCE-01':'R3-SOURCE-RESEARCH-01',plist]);
+    if(firmware)fs.writeFileSync(path.join(app,(focusEdition||o['experimental-ota']==='TLC1')?'TurboWeReadCandidate.zip':music?'TurboMusicCandidate.zip':'TurboNavigationCandidate.zip'),firmware,{flag:'wx'});
     if(music){
       fs.copyFileSync(path.join(here,'music/Beans-MIT-LICENSE.txt'),path.join(app,'TurboMusic-Beans-MIT-LICENSE.txt'));
       const musicInfo=JSON.parse(run('plutil',['-convert','json','-o','-',plist],{encoding:'utf8'}));
@@ -107,6 +155,7 @@ print(json.dumps({'entitlements':p['Entitlements'],'expires':p['ExpirationDate']
   const ep=path.join(destination,'signing-entitlements.plist');
   run('python3',['-c','import sys,json,plistlib; plistlib.dump(json.load(sys.stdin),open(sys.argv[1],"wb"))',ep],{input:JSON.stringify(entitlement)});fs.chmodSync(ep,0o600);
   fs.copyFileSync(o.profile,path.join(app,'embedded.mobileprovision'));
+  if(amapKey)fs.writeFileSync(path.join(app,'TIOAMapPrivate.json'),JSON.stringify({bundleIdentifier:amapKey.bundleIdentifier,apiKey:amapKey.apiKey})+'\n',{flag:'wx',mode:0o600});
   const nested=[];function walk(dir){for(const entry of fs.readdirSync(dir,{withFileTypes:true})){const p=path.join(dir,entry.name);if(entry.isSymbolicLink())throw Error('symlink_requires_review');if(entry.isDirectory()){walk(p);if(entry.name.endsWith('.framework'))nested.push(p);}else if(entry.name.endsWith('.dylib'))nested.push(p);}}
   walk(path.join(app,'Frameworks'));
   for(const p of nested)run('codesign',['--force','--sign',o.identity,'--timestamp=none','--generate-entitlement-der',p]);
@@ -116,7 +165,7 @@ print(json.dumps({'entitlements':p['Entitlements'],'expires':p['ExpirationDate']
   run('/usr/bin/ditto',['-c','-k','--norsrc','--noextattr','--keepParent',path.join(destination,'Payload'),ipa]);fs.chmodSync(ipa,0o600);
   run('/usr/bin/unzip',['-tq',ipa]);
   const names=run('/usr/bin/unzip',['-Z1',ipa],{encoding:'utf8'}).split('\n');if(names.some(n=>n.split('/').some(x=>x==='__MACOSX'||x.startsWith('._'))))throw Error('unexpected_archive_metadata');
-  const report={status:'SIGNED_NOT_DEVICE_ACCEPTED',signatureVerified:true,officialSourceUploaded:false,privateBootstrapIncluded:false,experimentalOTA:!!otaPatch,flashAuthorized:false,ipaSHA256:createHash('sha256').update(fs.readFileSync(ipa)).digest('hex'),pushEntitled:!!entitlement['aps-environment'],appleSignInEntitled:!!entitlement['com.apple.developer.applesignin']};
+  const report=packageReport({status:'SIGNED_NOT_DEVICE_ACCEPTED',signatureVerified:true,officialSourceUploaded:false,privateBootstrapIncluded:false,amapKeySeeded:!!amapKey,experimentalOTA:!!otaPatch,flashAuthorized:false,ipaSHA256:createHash('sha256').update(fs.readFileSync(ipa)).digest('hex'),pushEntitled:!!entitlement['aps-environment'],appleSignInEntitled:!!entitlement['com.apple.developer.applesignin'],memorySync:memorySyncPackagingNotes()},amapKey?.apiKey);
   fs.writeFileSync(path.join(destination,'report.json'),JSON.stringify(report,null,2)+'\n',{flag:'wx',mode:0o600});console.log(JSON.stringify(report,null,2));
 }
 if(process.argv[1]&&path.resolve(process.argv[1])===fileURLToPath(import.meta.url)){try{main();}catch(e){const known=/^[a-z_]+$/.test(e.message);console.error(known?e.message:'Local packaging failed. Check compatible source, profile and signing identity. No subprocess output or credentials are printed.');process.exitCode=1;}}

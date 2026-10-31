@@ -6,7 +6,9 @@
 #import "DisplayHUDRenderer.h"
 #import "NativeNavigationUI.h"
 #import "NativeNavigation.h"
+#if TIO_OTA_RESEARCH_ENABLED
 #import "ExperimentalOTAFlash.h"
+#endif
 #import "display_carrier.h"
 #import "ProtocolContext.h"
 #import "ImageUploadUI.h"
@@ -129,7 +131,11 @@ NSDictionary *TDPPhoneNavigationStatus(void){return TNVStatus();}
 - (void)saveStatus{
  NSString *root=[NSHomeDirectory() stringByAppendingPathComponent:@"Library/Application Support/TurboIOPrivateAddon"];
  [NSFileManager.defaultManager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:@{NSFilePosixPermissions:@0700} error:nil];
- NSDictionary *d=@{@"build":@"NAVIGATION-PHONE-01",@"timestamp":@(NSDate.date.timeIntervalSince1970),@"pid":@(NSProcessInfo.processInfo.processIdentifier),@"otaStage":TIOOTAFlashStatus()[@"stage"]?:@0,@"state":Session.state?:@"not_queried",@"ready":@(Session.ready),@"busy":@(Session.busy),@"sid":@(Session.sessionID),@"revision":@(Session.revision),@"chunks":@(Session.completedChunks),@"frameActive":@(Session.frameActive),@"frameElapsed":@(Session.frameElapsed),@"deltaActive":@(Session.deltaActive),@"deltaTotal":@(Session.deltaTotal),@"deltaCompleted":@(Session.completedRects),@"deltaElapsed":@(Session.deltaElapsed),@"pixelBaseline":@(Session.hasPixelBaseline),@"firmwareDetection":@"query-reply-only",@"physicalDisplayVerified":@NO};
+ NSDictionary *d=@{@"build":@"NAVIGATION-PHONE-01",@"timestamp":@(NSDate.date.timeIntervalSince1970),@"pid":@(NSProcessInfo.processInfo.processIdentifier),
+#if TIO_OTA_RESEARCH_ENABLED
+ @"otaStage":TIOOTAFlashStatus()[@"stage"]?:@0,
+#endif
+ @"state":Session.state?:@"not_queried",@"ready":@(Session.ready),@"busy":@(Session.busy),@"sid":@(Session.sessionID),@"revision":@(Session.revision),@"chunks":@(Session.completedChunks),@"frameActive":@(Session.frameActive),@"frameElapsed":@(Session.frameElapsed),@"deltaActive":@(Session.deltaActive),@"deltaTotal":@(Session.deltaTotal),@"deltaCompleted":@(Session.completedRects),@"deltaElapsed":@(Session.deltaElapsed),@"pixelBaseline":@(Session.hasPixelBaseline),@"firmwareDetection":@"query-reply-only",@"physicalDisplayVerified":@NO};
  NSString *path=[root stringByAppendingPathComponent:@"display-phone-status.json"];
  [[NSJSONSerialization dataWithJSONObject:d options:NSJSONWritingSortedKeys error:nil] writeToFile:path options:NSDataWritingAtomic error:nil];
  [NSFileManager.defaultManager setAttributes:@{NSFilePosixPermissions:@0600} ofItemAtPath:path error:nil];

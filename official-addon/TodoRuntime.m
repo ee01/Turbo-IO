@@ -85,9 +85,9 @@ static void Send(id self,SEL cmd,NSString *channel,NSData *message,id reply){
                 NSMutableDictionary *e=[event mutableCopy],*m=[event[@"message"] mutableCopy];NSData *data=Data(m[@"payload"]);if(data)m[@"payload"]=data;e[@"message"]=m;NSDictionary *physical=TIOTodoPhysicalStatus(e);
 #if TIO_OTA_RESEARCH_ENABLED
                 TIOOTAFlashObserveEvent(e);
+#endif
 #if TIO_NATIVE_NAV
                 if(TDPPhoneRouteReply(e,^(BOOL owned){if(owned){if(reply)((void(^)(NSData *))reply)(nil);}else PriorSend(self,cmd,channel,message,reply);}))return;
-#endif
 #endif
                 dispatch_async(dispatch_get_main_queue(),^{TIOProtocolObserveEvent(e);TIONewsTeleObserveEvent(e);TIONavObserveEvent(e);TIOSubtitleObserveEvent(e);});
                 if(physical)dispatch_async(dispatch_get_main_queue(),^{PhysicalEvents++;if(TestWire.length&&[physical[@"wireId"] isEqual:TestWire]&&[physical[@"deviceId"] isEqual:TestDevice]){PhysicalComplete=[physical[@"status"] isEqual:@1];State=PhysicalComplete?@"收到此测试项的眼镜完成回传，真实ID匹配":@"收到此测试项的眼镜未完成回传";SaveEvidence();}});

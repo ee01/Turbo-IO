@@ -15,12 +15,16 @@ NSArray<NSDictionary *> *TIOResearchSections(NSString *page){
 #if TIO_MUSIC
         @{@"title":@"音乐随行",@"rows":@[Row(@"music",@"网易云音乐 · 第十项菜单",@"music.note",-2,20)]},
 #endif
+#if !TIO_TLC1_UPGRADE
         @{@"title":@"地图与眼镜导航",@"rows":@[Row(@"navigation",@"步行 / 骑行 / 驾车导航",@"map",-3,0)]},
+#endif
         @{@"title":@"录音与整理",@"rows":@[Row(@"recordings",@"录音与文件分享",@"waveform",-1,0),Row(@"summary",@"转写文字整理",@"text.badge.star",-1,1)]},
-        @{@"title":@"全天智记",@"rows":@[Row(@"lifelogText",@"已保存文字",@"doc.text",-1,2),Row(@"lifelogAudio",@"音频保存与分享",@"waveform.circle",-1,3),Row(@"capture",@"保存之后的最终文字",@"square.and.arrow.down",1,0),Row(@"archive",@"导出文字归档",@"square.and.arrow.up",1,1)]}];
+        @{@"title":@"全天智记",@"rows":@[Row(@"lifelogText",@"已保存文字",@"doc.text",-1,2),Row(@"lifelogAudio",@"音频保存与分享",@"waveform.circle",-1,3),Row(@"capture",@"保存之后的最终文字",@"square.and.arrow.down",1,0),Row(@"archive",@"导出文字归档",@"square.and.arrow.up",1,1),Row(@"memoryUpload",@"同意上传到 Mac",@"icloud.and.arrow.up",-5,0),Row(@"memoryPause",@"暂停上传",@"pause.circle",-5,1),Row(@"memoryPair",@"配对这台 Mac",@"link",-5,2),Row(@"memorySyncNow",@"立即同步",@"arrow.clockwise",-5,3),Row(@"memoryHistory",@"上传已有副本",@"clock.arrow.circlepath",-5,4),Row(@"memoryQueue",@"同步队列",@"list.bullet",-5,5)]}];
     if([page isEqual:@"diagnostics"])return @[
 #if TIO_OTA_RESEARCH_ENABLED
-#if TIO_MUSIC
+#if TIO_TLC1_UPGRADE
+        @{@"title":@"TLC1 专用升级工具 · 非日常使用",@"rows":@[Row(@"experimentalOTA",@"TLC1 固件 · 默认锁定",@"exclamationmark.shield",-4,0)]},
+#elif TIO_MUSIC
         @{@"title":@"TMU1 研究固件 · 有变砖风险",@"rows":@[Row(@"experimentalOTA",@"TMU1 音乐固件 · 默认锁定",@"exclamationmark.shield",-4,0),Row(@"displayPhone",@"Turbo Display · 传图测试",@"rectangle.connected.to.line.below",-4,1)]},
 #elif TIO_NATIVE_NAV
         @{@"title":@"TNV1 研究固件 · 有变砖风险",@"rows":@[Row(@"experimentalOTA",@"TNV1 导航固件 · 默认锁定",@"exclamationmark.shield",-4,0),Row(@"displayPhone",@"Turbo Display · 传图测试",@"rectangle.connected.to.line.below",-4,1)]},

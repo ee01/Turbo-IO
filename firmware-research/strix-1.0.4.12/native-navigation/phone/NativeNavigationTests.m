@@ -13,16 +13,16 @@ int main(int argc,char **argv){@autoreleasepool{
  __block NSTimeInterval now=1;__block NSData *wire;__block NSString *task;__block TNVSubmitted submit;__block unsigned sends=0,cleanups=0;
  TNVSession *s=[[TNVSession alloc]initWithDevice:@"test-peer" session:10 clock:^{return now;} sender:^(NSData *b,NSString *t,TNVSubmitted done){assert(tn_packet_valid(b.bytes,b.length));wire=b;task=t;submit=done;sends++;} cleanup:^(NSString *t){assert([t isEqual:task]);cleanups++;}];
  NSMutableArray *trace=[NSMutableArray new];
- assert([s start:Frame(80) always:NO]);[trace addObject:[wire base64EncodedStringWithOptions:0]];assert(s.busy&&s.active&&sends==1);for(int i=0;i<100;i++)[s offer:Frame(i)];[s pump];assert(sends==1);
- assert(![s consume:File(@"sdk-native-1")]);assert([s consume:Ack(wire,0)]);assert(s.busy);submit(YES,@"sdk-native-1");assert(!s.busy&&cleanups==1);
+ assert([s start:Frame(80) always:NO]);[trace addObject:[wire base64EncodedStringWithOptions:0]];assert(s.busy&&s.active&&sends==1);assert([s.status[@"displayState"] isEqual:@"starting"]);assert(![s.status[@"physicalVerified"] boolValue]);for(int i=0;i<100;i++)[s offer:Frame(i)];[s pump];assert(sends==1);
+ assert(![s consume:File(@"sdk-native-1")]);assert([s consume:Ack(wire,0)]);assert(s.busy);submit(YES,@"sdk-native-1");assert(!s.busy&&cleanups==1);assert([s.status[@"displayState"] isEqual:@"confirmed"]);
  now+=1.1;[s pump];assert(sends==2);[trace addObject:[wire base64EncodedStringWithOptions:0]];submit(YES,@"sdk-native-2");assert([s consume:File(@"sdk-native-2")]);assert(s.busy);assert([s consume:Ack(wire,0)]);assert(!s.busy);
  now+=1.1;[s pump];assert(sends==2); // identical scene does not flood
  [s setAlways:YES];now+=1;[s pump];assert(sends==3);[trace addObject:[wire base64EncodedStringWithOptions:0]];submit(YES,@"sdk-native-3");[s consume:Ack(wire,0)];[s consume:File(@"sdk-native-3")];
  now+=20;[s pump];assert(sends==4&&((const uint8_t *)wire.bytes)[5]==TN_HEARTBEAT);[trace addObject:[wire base64EncodedStringWithOptions:0]];submit(YES,@"sdk-native-4");[s consume:Ack(wire,0)];[s consume:File(@"sdk-native-4")];now+=1.1;[s pump];assert(sends==4);
- [s stop];assert(sends==5&&((const uint8_t *)wire.bytes)[5]==TN_STOP);[trace addObject:[wire base64EncodedStringWithOptions:0]];submit(YES,@"sdk-native-5");[s consume:Ack(wire,0)];[s consume:File(@"sdk-native-5")];assert(!s.active&&!s.busy&&cleanups==5);
+ [s stop];assert(sends==5&&((const uint8_t *)wire.bytes)[5]==TN_STOP);[trace addObject:[wire base64EncodedStringWithOptions:0]];submit(YES,@"sdk-native-5");[s consume:Ack(wire,0)];[s consume:File(@"sdk-native-5")];assert(!s.active&&!s.busy&&cleanups==5);assert([s.status[@"displayState"] isEqual:@"stopped"]);
  assert(![s start:Frame(40) always:NO]); // Each START requires a new persisted monotonic SID.
  s=[[TNVSession alloc]initWithDevice:@"test-peer" session:11 clock:^{return now;} sender:^(NSData *b,NSString *t,TNVSubmitted done){wire=b;task=t;submit=done;} cleanup:nil];
- assert([s start:Frame(40) always:NO]);now+=9;[s pump];assert(!s.active&&s.busy);submit(YES,@"late-task");[s consume:File(@"late-task")];[s consume:Ack(wire,0)];assert(!s.active&&!s.busy);assert(![s start:Frame(40) always:NO]);
+ assert([s start:Frame(40) always:NO]);now+=9;[s pump];assert(!s.active&&s.busy);assert([s.status[@"displayState"] isEqual:@"unknownOutcome"]);submit(YES,@"late-task");[s consume:File(@"late-task")];[s consume:Ack(wire,0)];assert(!s.active&&!s.busy);assert(![s start:Frame(40) always:NO]);
  // Sender rejects wrong-peer / malformed data before touching SDK; cleanup is scoped.
  NSURL *root=[NSURL fileURLWithPath:[NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString] isDirectory:YES];
  __block BOOL called=NO,finished=NO;

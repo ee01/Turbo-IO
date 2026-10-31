@@ -1,10 +1,27 @@
 // Included inside TIONavigationPanel. Uses the same pinned SDK manager, no second navigation engine.
 #if TIO_DISPLAY_PHONE
-- (NSDictionary *)displayHUDFrame{return self.display;}
+- (NSDictionary *)displayHUDFrame{
+#if TIO_DAILY_NAVIGATION
+ NSMutableDictionary *frame=[self.display mutableCopy];frame[@"routeGeneration"]=@(self.generation);frame[@"navObservedAt"]=@(self.lastInfo);return frame;
+#else
+ return self.display;
+#endif
+}
 - (BOOL)canStartDisplayHUD{
  NSDictionary *t=TIONavTransportStatus();
+#if TIO_DAILY_NAVIGATION
+ if(![TIONavigationCompatibilityStatus()[@"lensNavigationAllowed"] boolValue])return NO;
+#endif
  return self.active&&!self.routeReady&&!self.fixture&&!self.planning&&!self.rerouting&&!self.gpsWeak&&NSProcessInfo.processInfo.systemUptime-self.lastInfo<=15&&[self.display[@"phase"] isEqual:@"navigating"]&&![self.subtitleHUD.status[@"enabled"] boolValue]&&[TIOSubtitleNavigationStatus()[@"phase"] isEqual:@"idle"]&&![self.teleHUD.status[@"enabled"] boolValue]&&![TIONewsTeleStatus()[@"active"] boolValue]&&![t[@"enabled"] boolValue]&&![t[@"pending"] boolValue]&&![t[@"notices"] boolValue]&&![t[@"noticePending"] boolValue];
 }
+#if TIO_DAILY_NAVIGATION
+- (void)buildDisplayHUD{
+ UILabel *title=[self navLabel:@"眼镜导航" size:16 weight:UIFontWeightSemibold];[self.lensCard addArrangedSubview:title];
+ UILabel *guide=[self navLabel:@"开始导航后自动请求进入镜片导航。眼镜须在首页、未合上且没有语音或其他任务占用。" size:12 weight:UIFontWeightRegular];guide.textColor=UIColor.secondaryLabelColor;[self.lensCard addArrangedSubview:guide];
+ self.tdpStatus=[self navLabel:@"等待开始导航" size:12 weight:UIFontWeightRegular];self.tdpStatus.accessibilityIdentifier=@"navigation-tdp-status";[self.lensCard addArrangedSubview:self.tdpStatus];
+ self.tdpButton=[self navAction:@"停止眼镜导航" icon:@"stop.circle" selector:@selector(toggleDisplayHUD) primary:NO];self.tdpButton.accessibilityIdentifier=@"navigation-tdp-stop";[self.lensCard addArrangedSubview:self.tdpButton];
+}
+#else
 - (void)buildDisplayHUD{
  UILabel *title=[self navLabel:@"眼镜原生导航 · TNV1" size:16 weight:UIFontWeightSemibold];[self.lensCard addArrangedSubview:title];
  UILabel *guide=[self navLabel:@"① 先刷入TNV1实验固件\n② 规划路线 → 开始模拟或导航\n③ 点开启，手机主动打开眼镜导航页，无需手动进菜单\n内置箭头＋文字＋路线示意图（非地图底图）。默认60秒无有效更新息屏，实体键可唤醒，返回键退出。试验用品，请以手机和道路实际指示为准。" size:12 weight:UIFontWeightRegular];guide.textColor=UIColor.secondaryLabelColor;[self.lensCard addArrangedSubview:guide];
@@ -13,7 +30,34 @@
  self.tdpStatus=[self navLabel:@"单次最多328字节；不再传整幅导航图片" size:12 weight:UIFontWeightRegular];self.tdpStatus.accessibilityIdentifier=@"navigation-tdp-status";[self.lensCard addArrangedSubview:self.tdpStatus];
  self.tdpButton=[self navAction:@"开启眼镜原生导航" icon:@"arrow.triangle.turn.up.right.diamond" selector:@selector(toggleDisplayHUD) primary:YES];self.tdpButton.accessibilityIdentifier=@"navigation-tdp-enable";[self.lensCard addArrangedSubview:self.tdpButton];
 }
+#endif
 - (void)nativeNavAlwaysChanged:(UISwitch *)sender{TNVSetAlways(sender.on);}
+#if TIO_DAILY_NAVIGATION
+- (void)refreshDisplayHUD{
+ if(!self.tdpStatus)return;NSDictionary *s=TDPPhoneNavigationStatus();BOOL on=[s[@"active"] boolValue];
+ self.tdpButton.hidden=!on;self.tdpButton.enabled=on;
+#if TIO_DAILY_NAVIGATION
+ NSDictionary *compatibility=TIONavigationCompatibilityStatus();
+ if(![compatibility[@"lensNavigationAllowed"] boolValue]){self.tdpStatus.text=compatibility[@"reason"];return;}
+#endif
+ self.tdpStatus.text=s[@"note"]?:@"等待开始导航";
+}
+- (void)attemptAutomaticDisplayHUD{
+ if(!self.nativeAutoStartPending)return;
+#if TIO_DAILY_NAVIGATION
+ if(![TIONavigationCompatibilityStatus()[@"lensNavigationAllowed"] boolValue]){self.nativeAutoStartPending=NO;[self refreshDisplayHUD];return;}
+#endif
+ if(![self canStartDisplayHUD])return;
+ self.nativeAutoStartPending=NO;
+ if(!TDPPhoneNavigationStart([self displayHUDFrame]))self.note=@"手机导航继续；眼镜导航未能启动，请查看连接与占用状态";
+ [self refreshDisplayHUD];
+}
+- (void)toggleDisplayHUD{
+ self.nativeAutoStartPending=NO;
+ if([TDPPhoneNavigationStatus()[@"active"] boolValue])TDPPhoneNavigationStop();
+ [self refreshDisplayHUD];
+}
+#else
 - (void)refreshDisplayHUD{
  if(!self.tdpButton)return;NSDictionary *s=TDPPhoneNavigationStatus();BOOL on=[s[@"active"] boolValue];
  UIButtonConfiguration *c=self.tdpButton.configuration;c.title=on?@"停止并退出眼镜导航":@"开启眼镜原生导航";self.tdpButton.configuration=c;self.tdpButton.enabled=on||[self canStartDisplayHUD];
@@ -27,6 +71,8 @@
  [a addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
  [a addAction:[UIAlertAction actionWithTitle:@"已确认，开始" style:UIAlertActionStyleDefault handler:^(UIAlertAction *x){if(g!=self.generation||![self canStartDisplayHUD])return;BOOL ok=TDPPhoneNavigationStart([self displayHUDFrame]);if(!ok)[self alert:@"HUD未开启" message:@"请确认连接和无在途文件，再查看状态；不会自动重试。"] ;[self refreshDisplayHUD];}]];[self presentViewController:a animated:YES completion:nil];
 }
+- (void)attemptAutomaticDisplayHUD{}
+#endif
 #if TIO_AMAP_ENABLED
 - (void)attachNativeHUD{
  if(self.sessionTransport==TIONavigationRide)return; // Native HUD advertises walk/drive, not ride.
